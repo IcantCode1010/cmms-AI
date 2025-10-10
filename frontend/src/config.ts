@@ -83,3 +83,11 @@ export const brandRawConfig: BrandRawConfig = getRuntimeValue('BRAND_CONFIG')
   : null;
 
 export const isWhiteLabeled: boolean = !!(customLogoPaths || brandRawConfig);
+
+export const chatkitEnabled =
+  getRuntimeValue('CHATKIT_ENABLED') === 'true';
+
+export const chatkitAgentId = getRuntimeValue('CHATKIT_AGENT_ID');
+
+export const agentApiBase =
+  getRuntimeValue('AGENT_API_BASE') || `${apiUrl}`;

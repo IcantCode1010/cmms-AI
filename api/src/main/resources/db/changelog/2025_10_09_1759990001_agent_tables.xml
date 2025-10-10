@@ -1,0 +1,82 @@
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.4.xsd">
+
+    <changeSet id="2025-10-09-agent-tool-log" author="codex">
+        <createTable tableName="agent_tool_invocation_log">
+            <column name="id" type="bigserial">
+                <constraints primaryKey="true" primaryKeyName="pk_agent_tool_invocation_log"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="CURRENT_TIMESTAMP">
+                <constraints nullable="false"/>
+            </column>
+            <column name="user_id" type="bigint"/>
+            <column name="company_id" type="bigint"/>
+            <column name="tool_name" type="varchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="arguments_json" type="text"/>
+            <column name="result_count" type="integer"/>
+            <column name="status" type="varchar(50)"/>
+            <column name="correlation_id" type="varchar(100)"/>
+        </createTable>
+
+        <createIndex tableName="agent_tool_invocation_log"
+                     indexName="idx_agent_tool_log_user">
+            <column name="user_id"/>
+        </createIndex>
+
+        <createIndex tableName="agent_tool_invocation_log"
+                     indexName="idx_agent_tool_log_company">
+            <column name="company_id"/>
+        </createIndex>
+
+        <createIndex tableName="agent_tool_invocation_log"
+                     indexName="idx_agent_tool_log_status">
+            <column name="status"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="2025-10-09-agent-draft-action" author="codex">
+        <createTable tableName="agent_draft_action">
+            <column name="id" type="bigserial">
+                <constraints primaryKey="true" primaryKeyName="pk_agent_draft_action"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="CURRENT_TIMESTAMP">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp with time zone"/>
+            <column name="user_id" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="company_id" type="bigint"/>
+            <column name="agent_session_id" type="varchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="operation_type" type="varchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="payload" type="text">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(50)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="agent_draft_action"
+                     indexName="idx_agent_draft_user">
+            <column name="user_id"/>
+        </createIndex>
+
+        <createIndex tableName="agent_draft_action"
+                     indexName="idx_agent_draft_company">
+            <column name="company_id"/>
+        </createIndex>
+
+        <createIndex tableName="agent_draft_action"
+                     indexName="idx_agent_draft_status">
+            <column name="status"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>

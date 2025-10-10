@@ -41,6 +41,7 @@ import { reducer as importsReducer } from 'src/slices/imports';
 import { reducer as exportsReducer } from 'src/slices/exports';
 import { reducer as workflowReducer } from 'src/slices/workflow';
 import { reducer as licenseReducer } from 'src/slices/license';
+import { reducer as agentChatReducer } from 'src/slices/agentChat';
 
 const rootReducer = combineReducers({
   calendar: calendarReducer,
@@ -84,7 +85,8 @@ const rootReducer = combineReducers({
   imports: importsReducer,
   exports: exportsReducer,
   workflows: workflowReducer,
-  license: licenseReducer
+  license: licenseReducer,
+  agentChat: agentChatReducer
 });
 
 export default rootReducer;

@@ -12,7 +12,10 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
   api:
-    image: intelloop/atlas-cmms-backend
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: atlas-cmms-backend-local
     container_name: atlas-cmms-backend
     depends_on:
       - postgres
@@ -55,10 +58,17 @@ services:
       LOGO_PATHS: ${LOGO_PATHS}
       CUSTOM_COLORS: ${CUSTOM_COLORS}
       BRAND_CONFIG: ${BRAND_CONFIG}
+      AGENT_CHATKIT_ENABLED: ${AGENT_CHATKIT_ENABLED:-false}
+      AGENT_CHATKIT_AGENT_ID: ${AGENT_CHATKIT_AGENT_ID:-}
+      AGENT_RUNTIME_URL: ${AGENT_RUNTIME_URL:-http://agents-proxy:4005}
+      AGENT_RUNTIME_TOKEN: ${AGENT_RUNTIME_TOKEN:-}
+      AGENT_TIMEOUT_MS: ${AGENT_TIMEOUT_MS:-30000}
+      AGENT_MAX_TOOL_RESULTS: ${AGENT_MAX_TOOL_RESULTS:-50}
     ports:
       - "8080:8080"
   frontend:
-    image: intelloop/atlas-cmms-frontend
+    build: ./frontend
+    image: atlas-cmms-frontend-local
     container_name: atlas-cmms-frontend
     environment:
         API_URL: ${PUBLIC_API_URL}
@@ -73,8 +83,23 @@ services:
         LOGO_PATHS: ${LOGO_PATHS:- }
         CUSTOM_COLORS: ${CUSTOM_COLORS:- }
         BRAND_CONFIG: ${BRAND_CONFIG:- }
+        CHATKIT_ENABLED: ${CHATKIT_ENABLED:-false}
+        CHATKIT_AGENT_ID: ${CHATKIT_AGENT_ID:-}
+        AGENT_API_BASE: ${AGENT_API_BASE:-http://localhost:8080}
     ports:
-      - "3000:3000"
+      - "3000:80"
+    depends_on:
+      - api
+  agents-proxy:
+    build: ./agents-proxy
+    container_name: atlas-agents-proxy
+    environment:
+      PORT: ${AGENTS_PROXY_PORT:-4005}
+      API_BASE: http://api:8080
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AGENT_CHATKIT_AGENT_ID: ${AGENT_CHATKIT_AGENT_ID:-}
+    ports:
+      - "${AGENTS_PROXY_PORT:-4005}:4005"
     depends_on:
       - api
   minio:

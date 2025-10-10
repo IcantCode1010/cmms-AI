@@ -1,0 +1,15 @@
+module.exports = {
+  rules: {
+    'type-enum': [
+      2,
+      'always',
+      ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test']
+    ],
+    'type-case': [2, 'always', 'lower-case'],
+    'subject-empty': [2, 'never'],
+    'subject-case': [0],
+    'scope-case': [2, 'always', 'lower-case'],
+    'scope-empty': [0],
+    'header-max-length': [2, 'always', 72]
+  }
+};

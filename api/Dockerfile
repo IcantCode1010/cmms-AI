@@ -1,21 +1,13 @@
-# Build Stage
-FROM maven:3.8.6-jdk-8 AS build
+# syntax=docker/dockerfile:1
+
+FROM maven:3.9.7-eclipse-temurin-17 AS builder
+WORKDIR /workspace
+COPY api/pom.xml ./pom.xml
+COPY api/src ./src
+RUN mvn package -DskipTests
+
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY . .
-RUN mvn clean package -DskipTests
-
-
-# Runtime Stage
-FROM openjdk:8-jdk-alpine
-
-# Set the working directory in the container
-WORKDIR /app
-
-# Copy the compiled Spring Boot application JAR file into the container at /app
-COPY --from=build /app/target/*.jar my-spring-boot-app.jar
-
-# Expose the port that the Spring Boot application will run on
+COPY --from=builder /workspace/target/app.jar ./app.jar
 EXPOSE 8080
-
-# Specify the command to run on container startup
-CMD ["java", "-jar", "/app/my-spring-boot-app.jar"]
+ENTRYPOINT ["java","-jar","/app/app.jar"]

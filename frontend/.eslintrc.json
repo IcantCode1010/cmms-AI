@@ -19,6 +19,7 @@
     "sourceType": "module"
   },
   "plugins": ["react", "@typescript-eslint"],
+  "ignorePatterns": ["commitlint.config.ts", "public/runtime-env.js"],
   "settings": {
     "react": {
       "pragma": "React",

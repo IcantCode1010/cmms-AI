@@ -9,6 +9,7 @@ import useAuth from 'src/hooks/useAuth';
 import { Alert, CssBaseline } from '@mui/material';
 import ThemeProvider from './theme/ThemeProvider';
 import AppInit from './components/AppInit';
+import ChatDock from './components/ChatDock';
 import { CustomSnackBarProvider } from './contexts/CustomSnackBarContext';
 import ReactGA from 'react-ga4';
 import {
@@ -122,6 +123,7 @@ function App() {
             <CompanySettingsProvider>
               <CssBaseline />
               {isInitialized ? content : <AppInit />}
+              {isAuthenticated && <ChatDock />}
               {user && company?.demo && <DemoAlert />}
             </CompanySettingsProvider>
           </CustomSnackBarProvider>

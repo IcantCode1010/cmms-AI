@@ -116,3 +116,11 @@ white-labeling:
   logo-paths: ${LOGO_PATHS:}
   custom-colors: ${CUSTOM_COLORS:}
   brand-config: ${BRAND_CONFIG:}
+
+agent:
+  chatkit-enabled: ${AGENT_CHATKIT_ENABLED:false}
+  chatkit-agent-id: ${AGENT_CHATKIT_AGENT_ID:}
+  runtime-url: ${AGENT_RUNTIME_URL:}
+  runtime-token: ${AGENT_RUNTIME_TOKEN:}
+  timeout-ms: ${AGENT_TIMEOUT_MS:30000}
+  max-tool-results: ${AGENT_MAX_TOOL_RESULTS:50}

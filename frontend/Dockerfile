@@ -1,25 +1,22 @@
-FROM node:21.6.1 AS build
+# syntax=docker/dockerfile:1
 
-WORKDIR /usr/src/app
-COPY package*.json ./
-RUN npm config set fetch-retry-maxtimeout 6000000
-RUN npm config set fetch-retry-mintimeout 1000000
-RUN NODE_OPTIONS="--max_old_space_size=4096" npm install --legacy-peer-deps
-COPY . .
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json .npmrc ./
+RUN npm install
+COPY public ./public
+COPY src ./src
+COPY tsconfig.json ./tsconfig.json
+ENV NODE_OPTIONS=--max_old_space_size=4096
+ENV DISABLE_ESLINT_PLUGIN=true
 RUN npm run build
 
-FROM nginx:1.27.0-alpine
-COPY --from=build /usr/src/app/build /usr/share/nginx/html
-COPY --from=build /usr/src/app/.env.example /usr/share/nginx/html/.env
-COPY --from=build /usr/src/app/nginx-custom.conf /etc/nginx/conf.d/default.conf
-
-RUN apk add --update nodejs
-RUN apk add --update npm
-
-RUN npm i -g runtime-env-cra
-
-WORKDIR /usr/share/nginx/html
-EXPOSE 3000
-
-CMD ["/bin/sh", "-c", "runtime-env-cra && nginx -g \"daemon off;\""]
-
+FROM nginx:1.25-alpine
+RUN rm /etc/nginx/conf.d/default.conf
+COPY nginx-custom.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/build /usr/share/nginx/html
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+EXPOSE 80
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]

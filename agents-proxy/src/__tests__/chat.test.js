@@ -1,18 +1,48 @@
 const request = require("supertest");
-const axios = require("axios");
 
 jest.mock("axios");
-
-const app = require("../index");
+jest.mock("@openai/agents", () => {
+  const actual = jest.requireActual("@openai/agents");
+  return {
+    ...actual,
+    run: jest.fn()
+  };
+});
 
 describe("POST /v1/chat", () => {
+  let app;
+  let runMock;
+  let axiosMock;
+
   beforeEach(() => {
-    jest.resetAllMocks();
-    axios.post.mockReset && axios.post.mockReset();
+    jest.resetModules();
+    process.env.OPENAI_API_KEY = "test-key";
+    axiosMock = require("axios");
+    axiosMock.get.mockReset();
+    axiosMock.post.mockReset();
+
+    const agents = require("@openai/agents");
+    runMock = agents.run;
+    runMock.mockReset();
+    runMock.mockImplementation(async (_agent, input) => {
+      const fallbackMessage = "Hi there, I'm still gathering maintenance insights.";
+      const history = [...input, { role: "assistant", content: fallbackMessage }];
+      return {
+        finalOutput: fallbackMessage,
+        history,
+        lastResponseId: "resp_default"
+      };
+    });
+
+    app = require("../index");
   });
 
-  it("returns stubbed success response with tool calls and drafts", async () => {
-    axios.get.mockResolvedValueOnce({
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it("orchestrates work order lookup and draft creation via tools", async () => {
+    axiosMock.get.mockResolvedValueOnce({
       data: {
         id: 7,
         fullName: "Ava Agent",
@@ -21,18 +51,56 @@ describe("POST /v1/chat", () => {
       }
     });
 
-    axios.post.mockResolvedValueOnce({
+    axiosMock.post.mockResolvedValueOnce({
       data: {
-        content: [
+        results: [
           {
             id: 101,
+            code: "WO-101",
             title: "Inspect HVAC filters",
             priority: "HIGH",
             status: "OPEN",
-            asset: { name: "HQ HVAC-1" }
+            asset: "HQ HVAC-1"
           }
-        ]
+        ],
+        total: 1
       }
+    });
+
+    runMock.mockImplementationOnce(async (agent, input, options) => {
+      const ctx = options.context;
+      const workOrdersTool = agent.tools.find(
+        (toolDef) => toolDef.name === "view_work_orders"
+      );
+      await workOrdersTool.invoke(
+        { context: ctx },
+        JSON.stringify({
+          limit: 5,
+          statuses: ["OPEN", "IN_PROGRESS", "ON_HOLD"],
+          search: ""
+        })
+      );
+
+      const draftTool = agent.tools.find(
+        (toolDef) => toolDef.name === "prepare_work_order_completion_draft"
+      );
+      const workOrders = ctx.toolResults.view_work_orders || [];
+      await draftTool.invoke(
+        { context: ctx },
+        JSON.stringify({
+          workOrderId: workOrders[0].id,
+          summary: `Complete ${workOrders[0].code}`
+        })
+      );
+
+      const assistantMessage =
+        "Hi Ava Agent, here's what I pulled together from the latest work orders.";
+      const history = [...input, { role: "assistant", content: assistantMessage }];
+      return {
+        finalOutput: assistantMessage,
+        history,
+        lastResponseId: "resp_workorders"
+      };
     });
 
     const response = await request(app)
@@ -44,25 +112,35 @@ describe("POST /v1/chat", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body.status).toBe("success");
-    expect(Array.isArray(response.body.messages)).toBe(true);
-    expect(Array.isArray(response.body.toolCalls)).toBe(true);
     expect(response.body.toolCalls[0].toolName).toBe("view_work_orders");
-    expect(Array.isArray(response.body.drafts)).toBe(true);
     expect(response.body.drafts.length).toBeGreaterThanOrEqual(1);
+
+    expect(axiosMock.get).toHaveBeenCalledWith(
+      "http://api:8080/auth/me",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer fake-token" }
+      })
+    );
+    expect(axiosMock.post).toHaveBeenCalledWith(
+      "http://api:8080/api/agent/tools/work-orders/search",
+      expect.objectContaining({
+        limit: 5,
+        statuses: ["OPEN", "IN_PROGRESS", "ON_HOLD"]
+      }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer fake-token" })
+      })
+    );
   });
 
   it("enforces RBAC and returns 403 for disallowed roles", async () => {
-    axios.get.mockResolvedValueOnce({
+    axiosMock.get.mockResolvedValueOnce({
       data: {
         id: 8,
         fullName: "Viewer User",
         role: { name: "VIEWER" },
         company: { id: 42 }
       }
-    });
-
-    axios.post.mockResolvedValueOnce({
-      data: { content: [] }
     });
 
     const response = await request(app)
@@ -75,10 +153,13 @@ describe("POST /v1/chat", () => {
     expect(response.statusCode).toBe(403);
     expect(response.body.status).toBe("error");
     expect(response.body.message).toMatch(/not authorised/i);
+    expect(runMock).not.toHaveBeenCalled();
+    expect(axiosMock.post).not.toHaveBeenCalled();
+    expect(axiosMock.get).toHaveBeenCalledTimes(1);
   });
 
   it("responds with guidance message when prompt has no known intent", async () => {
-    axios.get.mockResolvedValueOnce({
+    axiosMock.get.mockResolvedValueOnce({
       data: {
         id: 9,
         fullName: "Guided User",
@@ -87,8 +168,15 @@ describe("POST /v1/chat", () => {
       }
     });
 
-    axios.post.mockResolvedValueOnce({
-      data: { content: [] }
+    runMock.mockImplementationOnce(async (_agent, input) => {
+      const assistantMessage =
+        "Hi Guided User, I don't have fresh maintenance insights yet. Ask about open work orders or assets to get started.";
+      const history = [...input, { role: "assistant", content: assistantMessage }];
+      return {
+        finalOutput: assistantMessage,
+        history,
+        lastResponseId: "resp_guidance"
+      };
     });
 
     const response = await request(app)
@@ -103,7 +191,62 @@ describe("POST /v1/chat", () => {
     expect(response.body.messages[0].content).toMatch(/maintenance insights/i);
     expect(response.body.toolCalls.length).toBe(0);
     expect(response.body.drafts.length).toBe(0);
+    expect(axiosMock.post).not.toHaveBeenCalled();
+  });
+
+  it("rejects requests without an authorization header", async () => {
+    const response = await request(app)
+      .post("/v1/chat")
+      .send({
+        prompt: "Tell me about my work orders."
+      });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.body.status).toBe("error");
+    expect(response.body.message).toMatch(/authorization header/i);
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects requests when identity service denies access", async () => {
+    axiosMock.get.mockRejectedValueOnce({
+      response: { status: 401 },
+      message: "Unauthorized"
+    });
+
+    const response = await request(app)
+      .post("/v1/chat")
+      .set("Authorization", "Bearer fake-token")
+      .send({
+        prompt: "Show me work orders."
+      });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.body.status).toBe("error");
+    expect(response.body.message).toMatch(/failed/i);
+    expect(runMock).not.toHaveBeenCalled();
+    expect(axiosMock.post).not.toHaveBeenCalled();
+  });
+
+  it("rejects requests when tenant context is missing", async () => {
+    axiosMock.get.mockResolvedValueOnce({
+      data: {
+        id: 10,
+        fullName: "No Tenant",
+        role: { name: "ADMIN" }
+      }
+    });
+
+    const response = await request(app)
+      .post("/v1/chat")
+      .set("Authorization", "Bearer fake-token")
+      .send({
+        prompt: "List assets."
+      });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.body.status).toBe("error");
+    expect(response.body.message).toMatch(/tenant context/i);
+    expect(runMock).not.toHaveBeenCalled();
+    expect(axiosMock.post).not.toHaveBeenCalled();
   });
 });
-
-

@@ -33,3 +33,4 @@ EOF
 
 write_runtime_config
 exec "$@"
+

@@ -28,7 +28,7 @@ public class AgentRuntimeClient {
     private final ObjectMapper objectMapper;
     private OkHttpClient httpClient;
 
-    public AgentRuntimeResponse sendPrompt(AgentRuntimeRequest request, String correlationId) {
+    public AgentRuntimeResponse sendPrompt(AgentRuntimeRequest request, String correlationId, String userAuthorizationHeader) {
         if (!StringUtils.hasText(agentProperties.getRuntimeUrl())) {
             throw new AgentRuntimeException("Agent runtime URL is not configured");
         }
@@ -43,7 +43,11 @@ public class AgentRuntimeClient {
                     .header("Content-Type", "application/json")
                     .header("X-Correlation-Id", correlationId);
 
-            if (StringUtils.hasText(agentProperties.getRuntimeToken())) {
+            // Forward user's JWT token (primary authentication for agents-proxy)
+            if (StringUtils.hasText(userAuthorizationHeader)) {
+                builder.header("Authorization", userAuthorizationHeader);
+            } else if (StringUtils.hasText(agentProperties.getRuntimeToken())) {
+                // Fallback to runtime token if no user token provided
                 builder.header("Authorization", "Bearer " + agentProperties.getRuntimeToken());
             }
 

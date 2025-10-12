@@ -38,7 +38,7 @@ public class AgentToolRegistry {
         context.put("email", user.getEmail());
         context.put("fullName", user.getFullName());
         if (user.getRole() != null) {
-            context.put("role", user.getRole().getName());
+            context.put("role", user.getRole().getCode().name());
         }
         context.put("companyId", user.getCompany() != null ? user.getCompany().getId() : null);
         return context;

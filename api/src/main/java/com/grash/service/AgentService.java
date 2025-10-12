@@ -40,7 +40,7 @@ public class AgentService {
     private final AgentRuntimeClient agentRuntimeClient;
     private final AgentDraftActionRepository draftActionRepository;
 
-    public AgentChatResponse handlePrompt(OwnUser user, AgentPromptRequest request) {
+    public AgentChatResponse handlePrompt(OwnUser user, AgentPromptRequest request, String authorizationHeader) {
         String effectiveAgentId = Optional.ofNullable(request.getAgentId())
                 .filter(id -> !id.isEmpty())
                 .orElse(agentProperties.getChatkitAgentId());
@@ -69,7 +69,7 @@ public class AgentService {
                 .build();
 
         try {
-            AgentRuntimeResponse runtimeResponse = agentRuntimeClient.sendPrompt(runtimeRequest, correlationId);
+            AgentRuntimeResponse runtimeResponse = agentRuntimeClient.sendPrompt(runtimeRequest, correlationId, authorizationHeader);
             promptLog.setStatus("completed");
             promptLog.setResultCount(runtimeResponse.getMessages() != null ? runtimeResponse.getMessages().size() : null);
             invocationLogRepository.save(promptLog);

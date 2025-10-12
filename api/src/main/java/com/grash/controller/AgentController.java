@@ -47,7 +47,8 @@ public class AgentController {
         }
 
         OwnUser user = userService.whoami(httpServletRequest);
-        AgentChatResponse response = agentService.handlePrompt(user, request);
+        String authorizationHeader = httpServletRequest.getHeader("Authorization");
+        AgentChatResponse response = agentService.handlePrompt(user, request, authorizationHeader);
         return ResponseEntity.ok(response);
     }
 
@@ -57,7 +58,7 @@ public class AgentController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
         }
         OwnUser user = userService.whoami(request);
-        return ResponseEntity.ok(agentDraftService.getPendingDrafts(user.getId()));
+        return ResponseEntity.ok(agentDraftService.getPendingDrafts(user));
     }
 
     @PostMapping("/drafts/{draftId}/confirm")
@@ -68,7 +69,7 @@ public class AgentController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
         }
         OwnUser user = userService.whoami(request);
-        return ResponseEntity.ok(agentDraftService.confirmDraft(draftId, user.getId()));
+        return ResponseEntity.ok(agentDraftService.confirmDraft(draftId, user));
     }
 
     @DeleteMapping("/drafts/{draftId}")
@@ -79,7 +80,7 @@ public class AgentController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
         }
         OwnUser user = userService.whoami(request);
-        return ResponseEntity.ok(agentDraftService.declineDraft(draftId, user.getId()));
+        return ResponseEntity.ok(agentDraftService.declineDraft(draftId, user));
     }
 
     private String resolveAgentId(AgentPromptRequest request) {
@@ -89,3 +90,4 @@ public class AgentController {
         return agentProperties.getChatkitAgentId();
     }
 }
+

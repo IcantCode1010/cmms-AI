@@ -23,7 +23,7 @@ public class WrapperSpecification<T> implements Specification<T> {
     @Override
     public Predicate toPredicate(Root<T> root, CriteriaQuery<?> query, CriteriaBuilder cb) {
 
-        String strToSearch = filterField.getValue().toString().toLowerCase();
+        String strToSearch = filterField.getValue() != null ? filterField.getValue().toString().toLowerCase() : "";
         Predicate result = null;
         switch (Objects.requireNonNull(SearchOperation.getSimpleOperation(filterField.getOperation()))) {
             case CONTAINS:

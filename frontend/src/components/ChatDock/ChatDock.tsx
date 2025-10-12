@@ -200,8 +200,8 @@ const ChatDock = () => {
         <Paper
           elevation={12}
           sx={{
-            width: { xs: 320, sm: 360 },
-            height: 520,
+            width: { xs: 400, sm: 480, md: 540 },
+            height: { xs: 620, sm: 680, md: 720 },
             borderRadius: 3,
             display: 'flex',
             flexDirection: 'column',

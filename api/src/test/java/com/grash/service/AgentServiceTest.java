@@ -64,10 +64,10 @@ class AgentServiceTest {
         when(agentProperties.getChatkitAgentId()).thenReturn("default-agent");
         when(agentProperties.getRuntimeUrl()).thenReturn("");
 
-        AgentChatResponse response = agentService.handlePrompt(null, request);
+        AgentChatResponse response = agentService.handlePrompt(null, request, null);
 
         assertThat(response.getStatus()).isEqualTo("not_ready");
-        verify(runtimeClient, never()).sendPrompt(any(), anyString());
+        verify(runtimeClient, never()).sendPrompt(any(), anyString(), anyString());
     }
 
     @Test
@@ -115,15 +115,15 @@ class AgentServiceTest {
                         .build()))
                 .build();
 
-        when(runtimeClient.sendPrompt(any(), anyString())).thenReturn(runtimeResponse);
+        when(runtimeClient.sendPrompt(any(), anyString(), anyString())).thenReturn(runtimeResponse);
 
-        AgentChatResponse response = agentService.handlePrompt(user, request);
+        AgentChatResponse response = agentService.handlePrompt(user, request, "Bearer test-token");
 
         assertThat(response.getStatus()).isEqualTo("success");
         assertThat(response.getDrafts()).hasSize(1);
         assertThat(response.getMessages()).hasSize(1);
 
-        verify(runtimeClient).sendPrompt(any(), anyString());
+        verify(runtimeClient).sendPrompt(any(), anyString(), anyString());
         verify(logRepository, atLeast(2)).save(any(AgentToolInvocationLog.class));
         verify(draftActionRepository).save(any(AgentDraftAction.class));
 

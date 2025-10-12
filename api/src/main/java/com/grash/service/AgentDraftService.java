@@ -1,44 +1,155 @@
 package com.grash.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grash.dto.agent.AgentDraftActionResponse;
 import com.grash.exception.CustomException;
 import com.grash.model.AgentDraftAction;
+import com.grash.model.OwnUser;
+import com.grash.model.WorkOrder;
+import com.grash.model.enums.Status;
 import com.grash.repository.AgentDraftActionRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
+import java.io.IOException;
 import java.time.Instant;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AgentDraftService {
 
     private final AgentDraftActionRepository draftActionRepository;
+    private final WorkOrderService workOrderService;
+    private final ObjectMapper objectMapper;
 
-    public List<AgentDraftActionResponse> getPendingDrafts(Long userId) {
-        return draftActionRepository.findByUserIdAndStatus(userId, "pending")
+    public List<AgentDraftActionResponse> getPendingDrafts(OwnUser user) {
+        return draftActionRepository.findByUserIdAndStatus(user.getId(), "pending")
                 .stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }
 
-    public AgentDraftActionResponse confirmDraft(Long draftId, Long userId) {
-        AgentDraftAction draftAction = draftActionRepository.findByIdAndUserId(draftId, userId)
+    @Transactional
+    public AgentDraftActionResponse confirmDraft(Long draftId, OwnUser user) {
+        AgentDraftAction draftAction = draftActionRepository.findByIdAndUserId(draftId, user.getId())
                 .orElseThrow(() -> new CustomException("Draft action not found", HttpStatus.NOT_FOUND));
-        draftAction.setStatus("confirmed");
+        if (!"pending".equalsIgnoreCase(draftAction.getStatus())) {
+            throw new CustomException("Draft action already processed", HttpStatus.CONFLICT);
+        }
+        try {
+            applyDraftAction(draftAction, user);
+            draftAction.setStatus("applied");
+        } catch (CustomException exception) {
+            draftAction.setStatus("failed");
+            draftAction.setUpdatedAt(Instant.now());
+            draftActionRepository.save(draftAction);
+            throw exception;
+        } catch (RuntimeException exception) {
+            draftAction.setStatus("failed");
+            draftAction.setUpdatedAt(Instant.now());
+            draftActionRepository.save(draftAction);
+            log.error("Unexpected error while applying draft action {}", draftAction.getOperationType(), exception);
+            throw new CustomException("Failed to apply draft action", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
         draftAction.setUpdatedAt(Instant.now());
         return toResponse(draftActionRepository.save(draftAction));
     }
 
-    public AgentDraftActionResponse declineDraft(Long draftId, Long userId) {
-        AgentDraftAction draftAction = draftActionRepository.findByIdAndUserId(draftId, userId)
+    @Transactional
+    public AgentDraftActionResponse declineDraft(Long draftId, OwnUser user) {
+        AgentDraftAction draftAction = draftActionRepository.findByIdAndUserId(draftId, user.getId())
                 .orElseThrow(() -> new CustomException("Draft action not found", HttpStatus.NOT_FOUND));
         draftAction.setStatus("declined");
         draftAction.setUpdatedAt(Instant.now());
         return toResponse(draftActionRepository.save(draftAction));
+    }
+
+    private void applyDraftAction(AgentDraftAction draftAction, OwnUser user) {
+        String operation = draftAction.getOperationType();
+        if (!StringUtils.hasText(operation)) {
+            throw new CustomException("Draft action missing operation type", HttpStatus.BAD_REQUEST);
+        }
+        switch (operation.toLowerCase()) {
+            case "complete_work_order":
+                applyCompleteWorkOrderDraft(draftAction, user);
+                break;
+            default:
+                throw new CustomException("Unsupported draft operation: " + operation, HttpStatus.NOT_IMPLEMENTED);
+        }
+    }
+
+    private void applyCompleteWorkOrderDraft(AgentDraftAction draftAction, OwnUser user) {
+        Map<String, Object> payload = readPayload(draftAction.getPayload());
+        Long workOrderId = extractLong(payload.get("workOrderId"));
+        if (workOrderId == null) {
+            throw new CustomException("Draft payload missing workOrderId", HttpStatus.BAD_REQUEST);
+        }
+        WorkOrder workOrder = workOrderService.findByIdAndCompany(workOrderId, user.getCompany().getId())
+                .orElseThrow(() -> new CustomException("Work order not found", HttpStatus.NOT_FOUND));
+
+        if (Status.COMPLETE.equals(workOrder.getStatus())) {
+            markPayloadApplied(draftAction, payload, "Work order already complete.");
+            return;
+        }
+
+        workOrder.setStatus(Status.COMPLETE);
+        workOrder.setCompletedOn(new Date());
+        workOrder.setCompletedBy(user);
+        workOrderService.saveAndFlush(workOrder);
+
+        markPayloadApplied(draftAction, payload, "Work order marked as complete.");
+    }
+
+    private Map<String, Object> readPayload(String payloadJson) {
+        if (!StringUtils.hasText(payloadJson)) {
+            return new HashMap<>();
+        }
+        try {
+            return objectMapper.readValue(payloadJson, new TypeReference<Map<String, Object>>() {
+            });
+        } catch (IOException exception) {
+            log.warn("Failed to parse agent draft payload", exception);
+            throw new CustomException("Invalid draft payload", HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    private Long extractLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String && StringUtils.hasText((String) value)) {
+            try {
+                return Long.parseLong(((String) value).trim());
+            } catch (NumberFormatException exception) {
+                log.debug("Failed to parse long from string payload value: {}", value);
+            }
+        }
+        return null;
+    }
+
+    private void markPayloadApplied(AgentDraftAction draftAction, Map<String, Object> payload, String message) {
+        Map<String, Object> updated = payload == null ? new HashMap<>() : new HashMap<>(payload);
+        updated.put("appliedAt", Instant.now().toString());
+        if (StringUtils.hasText(message)) {
+            updated.put("result", message);
+        }
+        try {
+            draftAction.setPayload(objectMapper.writeValueAsString(updated));
+        } catch (JsonProcessingException exception) {
+            log.warn("Failed to serialize updated draft payload", exception);
+        }
     }
 
     private AgentDraftActionResponse toResponse(AgentDraftAction action) {
@@ -53,3 +164,6 @@ public class AgentDraftService {
                 .build();
     }
 }
+
+
+

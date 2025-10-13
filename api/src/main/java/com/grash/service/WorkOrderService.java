@@ -28,6 +28,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.util.Pair;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import javax.persistence.EntityManager;
 import javax.persistence.criteria.JoinType;
@@ -130,6 +131,13 @@ public class WorkOrderService {
 
     public Optional<WorkOrder> findByIdAndCompany(Long id, Long companyId) {
         return workOrderRepository.findByIdAndCompany_Id(id, companyId);
+    }
+
+    public Optional<WorkOrder> findByCustomIdIgnoreCaseAndCompany(String customId, Long companyId) {
+        if (!StringUtils.hasText(customId) || companyId == null) {
+            return Optional.empty();
+        }
+        return workOrderRepository.findByCustomIdIgnoreCaseAndCompany_Id(customId.trim(), companyId);
     }
 
     public Collection<WorkOrder> findByCompany(Long id) {

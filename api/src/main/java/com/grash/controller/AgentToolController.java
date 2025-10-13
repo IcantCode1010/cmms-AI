@@ -4,6 +4,8 @@ import com.grash.configuration.AgentProperties;
 import com.grash.dto.agent.AgentAssetSearchRequest;
 import com.grash.dto.agent.AgentAssetSummary;
 import com.grash.dto.agent.AgentToolResponse;
+import com.grash.dto.agent.AgentWorkOrderStatusUpdateRequest;
+import com.grash.dto.agent.AgentWorkOrderStatusUpdateResponse;
 import com.grash.dto.agent.AgentWorkOrderSearchRequest;
 import com.grash.dto.agent.AgentWorkOrderSummary;
 import com.grash.model.OwnUser;
@@ -30,6 +32,18 @@ public class AgentToolController {
     private final AgentProperties agentProperties;
     private final AgentToolService agentToolService;
     private final UserService userService;
+
+    @PostMapping("/work-orders/update-status")
+    public ResponseEntity<AgentWorkOrderStatusUpdateResponse> updateWorkOrderStatus(
+            HttpServletRequest httpRequest,
+            @Valid @RequestBody AgentWorkOrderStatusUpdateRequest statusRequest) {
+        if (!agentProperties.isChatkitEnabled()) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
+        OwnUser user = userService.whoami(httpRequest);
+        AgentWorkOrderStatusUpdateResponse response = agentToolService.updateWorkOrderStatus(user, statusRequest);
+        return ResponseEntity.ok(response);
+    }
 
     @PostMapping("/work-orders/search")
     public ResponseEntity<AgentToolResponse<AgentWorkOrderSummary>> searchWorkOrders(

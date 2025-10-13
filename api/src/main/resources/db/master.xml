@@ -152,4 +152,6 @@
              relativeToChangelogFile="true"/>
     <include file="changelog/2025_10_09_1759990001_agent_tables.xml"
              relativeToChangelogFile="true"/>
+    <include file="changelog/2025_10_12_1760270000_work_order_status_enhancements.xml"
+             relativeToChangelogFile="true"/>
 </databaseChangeLog>

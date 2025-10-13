@@ -47,6 +47,15 @@ public class WorkOrder extends WorkOrderBase {
 
     private Status status = Status.OPEN;
 
+    @Enumerated(EnumType.STRING)
+    private Status statusBeforeHold;
+
+    @Column(length = 255)
+    private String onHoldReasonCode;
+
+    @Column(length = 1000)
+    private String statusChangeNotes;
+
     @OneToOne
     @Audited(targetAuditMode = RelationTargetAuditMode.NOT_AUDITED, withModifiedFlag = true)
     private File signature;

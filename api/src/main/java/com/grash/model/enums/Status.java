@@ -7,7 +7,7 @@ public enum Status {
     OPEN(Arrays.asList("Open", "Ouvert")),
     IN_PROGRESS(Arrays.asList("IN_PROGRESS", "In Progress", "En cours")),
     ON_HOLD(Arrays.asList("ON_HOLD", "On hold", "En pause")),
-    COMPLETE(Arrays.asList("Complete", "Terminé"));
+    COMPLETE(Arrays.asList("Complete", "Completed", "COMPLETED", "Terminé"));
 
     private final List<String> strings;
 
@@ -22,6 +22,13 @@ public enum Status {
             }
         }
         return OPEN;
+    }
+
+    public boolean matches(String string) {
+        if (string == null) {
+            return false;
+        }
+        return strings.stream().anyMatch(str -> str.equalsIgnoreCase(string));
     }
 
 }

@@ -1,0 +1,25 @@
+{
+  "name": "agent-logs-utilities",
+  "version": "1.0.0",
+  "description": "Utilities for capturing and analyzing agent tool invocation logs",
+  "main": "export-logs.js",
+  "scripts": {
+    "export": "node export-logs.js",
+    "export:json": "node export-logs.js --format json --days 7 --output logs.json",
+    "export:csv": "node export-logs.js --format csv --days 7 --output logs.csv",
+    "export:errors": "node export-logs.js --status error --output errors.json",
+    "analyze": "python analyze-logs.py"
+  },
+  "dependencies": {
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "agent",
+    "logs",
+    "analytics",
+    "cmms"
+  ],
+  "author": "",
+  "license": "ISC"
+}

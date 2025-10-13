@@ -2,6 +2,8 @@ package com.grash.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grash.dto.agent.AgentDraftActionResponse;
+import com.grash.dto.agent.AgentWorkOrderStatusUpdateRequest;
+import com.grash.dto.agent.AgentWorkOrderStatusUpdateResponse;
 import com.grash.exception.CustomException;
 import com.grash.model.AgentDraftAction;
 import com.grash.model.Company;
@@ -12,6 +14,7 @@ import com.grash.repository.AgentDraftActionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -21,6 +24,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,6 +37,8 @@ class AgentDraftServiceTest {
     private AgentDraftActionRepository draftActionRepository;
     @Mock
     private WorkOrderService workOrderService;
+    @Mock
+    private AgentToolService agentToolService;
 
     private ObjectMapper objectMapper;
     private AgentDraftService agentDraftService;
@@ -39,35 +46,67 @@ class AgentDraftServiceTest {
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        agentDraftService = new AgentDraftService(draftActionRepository, workOrderService, objectMapper);
+        agentDraftService = new AgentDraftService(draftActionRepository, workOrderService, agentToolService, objectMapper);
     }
 
     @Test
     void confirmDraftCompletesWorkOrder() {
         OwnUser user = buildUser(9L, 4L);
-        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "complete_work_order", "{\"workOrderId\":99}");
+        String payload = "{\"summary\":\"Complete work order\",\"data\":{\"workOrderId\":99}}";
+        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "complete_work_order", payload);
         WorkOrder workOrder = buildWorkOrder(99L, user.getCompany());
 
         when(draftActionRepository.findByIdAndUserId(1L, user.getId())).thenReturn(Optional.of(draftAction));
         when(workOrderService.findByIdAndCompany(99L, user.getCompany().getId())).thenReturn(Optional.of(workOrder));
-        when(workOrderService.saveAndFlush(any(WorkOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
+        when(agentToolService.updateWorkOrderStatus(eq(user), any(AgentWorkOrderStatusUpdateRequest.class)))
+                .thenReturn(AgentWorkOrderStatusUpdateResponse.builder().success(true).build());
 
         AgentDraftActionResponse response = agentDraftService.confirmDraft(1L, user);
 
         assertThat(response.getStatus()).isEqualTo("applied");
-        assertThat(workOrder.getStatus()).isEqualTo(Status.COMPLETE);
-        assertThat(workOrder.getCompletedBy()).isEqualTo(user);
         assertThat(draftAction.getPayload()).contains("appliedAt");
 
-        verify(workOrderService).saveAndFlush(workOrder);
         verify(draftActionRepository, times(1)).save(draftAction);
+        ArgumentCaptor<AgentWorkOrderStatusUpdateRequest> requestCaptor =
+                ArgumentCaptor.forClass(AgentWorkOrderStatusUpdateRequest.class);
+        verify(agentToolService).updateWorkOrderStatus(eq(user), requestCaptor.capture());
+        AgentWorkOrderStatusUpdateRequest request = requestCaptor.getValue();
+        assertThat(request.getWorkOrderId()).isEqualTo("99");
+        assertThat(request.getNewStatus()).isEqualTo(Status.COMPLETE.name());
+    }
+
+    @Test
+    void confirmDraftResolvesWorkOrderByCustomId() {
+        OwnUser user = buildUser(12L, 6L);
+        String payload = "{\"summary\":\"Complete work order\",\"data\":{\"workOrderId\":\"WO000123\"}}";
+        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "complete_work_order", payload);
+        WorkOrder workOrder = buildWorkOrder(321L, user.getCompany());
+        workOrder.setCustomId("WO000123");
+
+        when(draftActionRepository.findByIdAndUserId(2L, user.getId())).thenReturn(Optional.of(draftAction));
+        when(workOrderService.findByCustomIdIgnoreCaseAndCompany("WO000123", user.getCompany().getId()))
+                .thenReturn(Optional.of(workOrder));
+        when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
+        when(agentToolService.updateWorkOrderStatus(eq(user), any(AgentWorkOrderStatusUpdateRequest.class)))
+                .thenReturn(AgentWorkOrderStatusUpdateResponse.builder().success(true).build());
+
+        AgentDraftActionResponse response = agentDraftService.confirmDraft(2L, user);
+
+        assertThat(response.getStatus()).isEqualTo("applied");
+        verify(workOrderService).findByCustomIdIgnoreCaseAndCompany("WO000123", user.getCompany().getId());
+        ArgumentCaptor<AgentWorkOrderStatusUpdateRequest> requestCaptor =
+                ArgumentCaptor.forClass(AgentWorkOrderStatusUpdateRequest.class);
+        verify(agentToolService).updateWorkOrderStatus(eq(user), requestCaptor.capture());
+        AgentWorkOrderStatusUpdateRequest request = requestCaptor.getValue();
+        assertThat(request.getWorkOrderId()).isEqualTo("WO000123");
+        assertThat(request.getNewStatus()).isEqualTo(Status.COMPLETE.name());
     }
 
     @Test
     void declineDraftMarksDeclined() {
         OwnUser user = buildUser(21L, 8L);
-        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "complete_work_order", "{\"workOrderId\":1}");
+        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "complete_work_order", "{\"summary\":\"Decline\",\"data\":{\"workOrderId\":1}}");
 
         when(draftActionRepository.findByIdAndUserId(55L, user.getId())).thenReturn(Optional.of(draftAction));
         when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
@@ -90,6 +129,41 @@ class AgentDraftServiceTest {
                 .hasMessageContaining("Unsupported draft operation");
         assertThat(draftAction.getStatus()).isEqualTo("failed");
         verify(draftActionRepository, times(1)).save(draftAction);
+    }
+
+    @Test
+    void confirmDraftWithoutNestedWorkOrderIdFails() {
+        OwnUser user = buildUser(44L, 22L);
+        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "complete_work_order",
+                "{\"summary\":\"Complete\",\"data\":{}}");
+
+        when(draftActionRepository.findByIdAndUserId(13L, user.getId())).thenReturn(Optional.of(draftAction));
+        when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
+
+        assertThatThrownBy(() -> agentDraftService.confirmDraft(13L, user))
+                .isInstanceOf(CustomException.class)
+                .hasMessage("Draft payload missing workOrderId");
+        assertThat(draftAction.getStatus()).isEqualTo("failed");
+        verify(draftActionRepository).save(draftAction);
+    }
+
+    @Test
+    void confirmDraftSkipsCompletedWorkOrder() {
+        OwnUser user = buildUser(55L, 24L);
+        String payload = "{\"summary\":\"Complete work order\",\"data\":{\"workOrderId\":321}}";
+        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "complete_work_order", payload);
+        WorkOrder workOrder = buildWorkOrder(321L, user.getCompany());
+        workOrder.setStatus(Status.COMPLETE);
+
+        when(draftActionRepository.findByIdAndUserId(99L, user.getId())).thenReturn(Optional.of(draftAction));
+        when(workOrderService.findByIdAndCompany(321L, user.getCompany().getId())).thenReturn(Optional.of(workOrder));
+        when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
+
+        AgentDraftActionResponse response = agentDraftService.confirmDraft(99L, user);
+
+        assertThat(response.getStatus()).isEqualTo("applied");
+        assertThat(draftAction.getPayload()).contains("Work order already complete.");
+        verify(agentToolService, never()).updateWorkOrderStatus(any(), any());
     }
 
     private AgentDraftAction buildDraftAction(Long userId, Long companyId, String operation, String payload) {

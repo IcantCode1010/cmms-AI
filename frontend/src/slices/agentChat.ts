@@ -14,6 +14,20 @@ import {
   declineDraft as declineDraftRequest
 } from 'src/utils/agentApi';
 
+const CHAT_STORAGE_KEY = 'atlas-agent-chat-state';
+const CHAT_HISTORY_LIMIT = 20;
+const CHAT_MEMORY_TTL_MS = (() => {
+  const raw =
+    typeof process !== 'undefined'
+      ? process.env.REACT_APP_AGENT_MEMORY_TTL_MS
+      : undefined;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15 * 60 * 1000;
+})();
+
+const isBrowser =
+  typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+
 interface AgentChatState {
   enabled: boolean;
   open: boolean;
@@ -28,16 +42,82 @@ interface AgentChatState {
   correlationId?: string;
 }
 
+type PersistedAgentChatState = {
+  sessionId?: string;
+  messages?: AgentChatMessage[];
+  updatedAt?: number;
+};
+
+const pruneMessages = (messages: AgentChatMessage[]): AgentChatMessage[] =>
+  messages.length > CHAT_HISTORY_LIMIT
+    ? messages.slice(-CHAT_HISTORY_LIMIT)
+    : messages;
+
+const loadPersistedState = (): Partial<AgentChatState> => {
+  if (!isBrowser) {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as PersistedAgentChatState;
+    if (
+      !parsed.updatedAt ||
+      Date.now() - parsed.updatedAt > CHAT_MEMORY_TTL_MS
+    ) {
+      window.localStorage.removeItem(CHAT_STORAGE_KEY);
+      return {};
+    }
+    return {
+      sessionId: parsed.sessionId,
+      messages: Array.isArray(parsed.messages) ? parsed.messages : []
+    };
+  } catch (error) {
+    if (process.env.NODE_ENV !== 'production') {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to load agent chat state', error);
+    }
+    return {};
+  }
+};
+
+const persistChatState = (state: AgentChatState) => {
+  if (!isBrowser) {
+    return;
+  }
+  try {
+    if (!state.sessionId && state.messages.length === 0) {
+      window.localStorage.removeItem(CHAT_STORAGE_KEY);
+      return;
+    }
+    const payload: PersistedAgentChatState = {
+      sessionId: state.sessionId,
+      messages: pruneMessages(state.messages),
+      updatedAt: Date.now()
+    };
+    window.localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    if (process.env.NODE_ENV !== 'production') {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to persist agent chat state', error);
+    }
+  }
+};
+
+const persistedSnapshot = loadPersistedState();
+
 const initialState: AgentChatState = {
   enabled: chatkitEnabled,
   open: false,
   sending: false,
   loadingDrafts: false,
-  messages: [],
+  messages: persistedSnapshot.messages ?? [],
   drafts: [],
   toolCalls: [],
   agentId: chatkitAgentId || undefined,
-  sessionId: undefined,
+  sessionId: persistedSnapshot.sessionId || undefined,
   correlationId: undefined,
   error: undefined
 };
@@ -123,8 +203,7 @@ export const sendPrompt =
       if (!trimmed) {
         return;
       }
-      const state = getState();
-      if (!state.agentChat.enabled) {
+      if (!getState().agentChat.enabled) {
         dispatch(
           slice.actions.promptFailure({
             error: 'Chat assistant is disabled for this environment.'
@@ -133,17 +212,30 @@ export const sendPrompt =
         return;
       }
       dispatch(slice.actions.promptQueued({ prompt: trimmed }));
+      persistChatState(getState().agentChat);
       try {
-        const { agentId, messages } = state.agentChat;
+        const {
+          agentId,
+          messages,
+          sessionId
+        } = getState().agentChat;
+        const metadata: Record<string, unknown> = {
+          source: 'web',
+          messageCount: messages.length
+        };
+        if (sessionId) {
+          metadata.sessionId = sessionId;
+        }
         const payload = await postChat<AgentChatResponse>({
           prompt: trimmed,
           agentId,
+          sessionId,
           metadata: {
-            source: 'web',
-            messageCount: messages.length
+            ...metadata
           }
         });
         dispatch(slice.actions.promptSuccess({ response: payload }));
+        persistChatState(getState().agentChat);
       } catch (error) {
         dispatch(
           slice.actions.promptFailure({
@@ -153,6 +245,7 @@ export const sendPrompt =
                 : 'Unable to reach the agent runtime.'
           })
         );
+        persistChatState(getState().agentChat);
       }
     };
 

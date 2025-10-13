@@ -4,12 +4,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grash.dto.agent.AgentDraftActionResponse;
+import com.grash.dto.agent.AgentWorkOrderStatusUpdateRequest;
 import com.grash.exception.CustomException;
 import com.grash.model.AgentDraftAction;
 import com.grash.model.OwnUser;
 import com.grash.model.WorkOrder;
 import com.grash.model.enums.Status;
 import com.grash.repository.AgentDraftActionRepository;
+import com.grash.utils.Helper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -19,10 +21,10 @@ import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.time.Instant;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -32,6 +34,7 @@ public class AgentDraftService {
 
     private final AgentDraftActionRepository draftActionRepository;
     private final WorkOrderService workOrderService;
+    private final AgentToolService agentToolService;
     private final ObjectMapper objectMapper;
 
     public List<AgentDraftActionResponse> getPendingDrafts(OwnUser user) {
@@ -92,22 +95,19 @@ public class AgentDraftService {
 
     private void applyCompleteWorkOrderDraft(AgentDraftAction draftAction, OwnUser user) {
         Map<String, Object> payload = readPayload(draftAction.getPayload());
-        Long workOrderId = extractLong(payload.get("workOrderId"));
-        if (workOrderId == null) {
-            throw new CustomException("Draft payload missing workOrderId", HttpStatus.BAD_REQUEST);
-        }
-        WorkOrder workOrder = workOrderService.findByIdAndCompany(workOrderId, user.getCompany().getId())
-                .orElseThrow(() -> new CustomException("Work order not found", HttpStatus.NOT_FOUND));
+        String workOrderIdentifier = resolveWorkOrderIdentifier(payload);
+        WorkOrder workOrder = resolveWorkOrder(workOrderIdentifier, user);
 
         if (Status.COMPLETE.equals(workOrder.getStatus())) {
             markPayloadApplied(draftAction, payload, "Work order already complete.");
             return;
         }
 
-        workOrder.setStatus(Status.COMPLETE);
-        workOrder.setCompletedOn(new Date());
-        workOrder.setCompletedBy(user);
-        workOrderService.saveAndFlush(workOrder);
+        AgentWorkOrderStatusUpdateRequest request = new AgentWorkOrderStatusUpdateRequest();
+        request.setWorkOrderId(workOrderIdentifier);
+        request.setNewStatus(Status.COMPLETE.name());
+
+        agentToolService.updateWorkOrderStatus(user, request);
 
         markPayloadApplied(draftAction, payload, "Work order marked as complete.");
     }
@@ -125,16 +125,58 @@ public class AgentDraftService {
         }
     }
 
-    private Long extractLong(Object value) {
-        if (value instanceof Number) {
-            return ((Number) value).longValue();
+    private String resolveWorkOrderIdentifier(Map<String, Object> payload) {
+        Object identifier = extractWorkOrderIdentifier(payload);
+        if (identifier == null) {
+            throw new CustomException("Draft payload missing workOrderId", HttpStatus.BAD_REQUEST);
         }
-        if (value instanceof String && StringUtils.hasText((String) value)) {
+        String normalized = normalizeIdentifier(identifier);
+        if (!StringUtils.hasText(normalized)) {
+            throw new CustomException("Draft payload missing workOrderId", HttpStatus.BAD_REQUEST);
+        }
+        return normalized;
+    }
+
+    private String normalizeIdentifier(Object identifier) {
+        if (identifier instanceof Number) {
+            return String.valueOf(((Number) identifier).longValue());
+        }
+        if (identifier instanceof String) {
+            String value = ((String) identifier).trim();
+            return StringUtils.hasText(value) ? value : null;
+        }
+        return null;
+    }
+
+    private WorkOrder resolveWorkOrder(String identifier, OwnUser user) {
+        Long companyId = user.getCompany().getId();
+        Optional<WorkOrder> optional = Optional.empty();
+        if (Helper.isNumeric(identifier)) {
             try {
-                return Long.parseLong(((String) value).trim());
+                Long workOrderId = Long.parseLong(identifier.trim());
+                optional = workOrderService.findByIdAndCompany(workOrderId, companyId);
             } catch (NumberFormatException exception) {
-                log.debug("Failed to parse long from string payload value: {}", value);
+                log.debug("Draft identifier {} not parsable as numeric id", identifier);
             }
+            if (optional.isPresent()) {
+                return optional.get();
+            }
+        }
+        optional = workOrderService.findByCustomIdIgnoreCaseAndCompany(identifier.trim(), companyId);
+        return optional.orElseThrow(() -> new CustomException("Work order not found", HttpStatus.NOT_FOUND));
+    }
+
+    private Object extractWorkOrderIdentifier(Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) {
+            return null;
+        }
+        if (payload.containsKey("workOrderId")) {
+            return payload.get("workOrderId");
+        }
+        Object dataNode = payload.get("data");
+        if (dataNode instanceof Map<?, ?>) {
+            Map<?, ?> dataMap = (Map<?, ?>) dataNode;
+            return dataMap.get("workOrderId");
         }
         return null;
     }

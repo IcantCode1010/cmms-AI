@@ -37,6 +37,8 @@ public interface WorkOrderRepository extends JpaRepository<WorkOrder, Long>, Jpa
     Collection<WorkOrder> findByDueDateBetweenAndCompany_Id(Date date1, Date date2, Long id);
 
     Optional<WorkOrder> findByIdAndCompany_Id(Long id, Long companyId);
+    
+    Optional<WorkOrder> findByCustomIdIgnoreCaseAndCompany_Id(String customId, Long companyId);
 
     Collection<WorkOrder> findByCreatedByAndCreatedAtBetween(Long id, Date date1, Date date2);
 

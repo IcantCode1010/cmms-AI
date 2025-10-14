@@ -23,7 +23,7 @@ services:
     volumes:
       - ./logo:/app/static/images
     environment:
-      DB_URL: postgres/atlas
+      DB_URL: postgres:5432/atlas
       DB_USER: ${POSTGRES_USER}
       DB_PWD: ${POSTGRES_PWD}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}

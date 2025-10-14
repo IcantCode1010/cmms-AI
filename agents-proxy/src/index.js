@@ -783,10 +783,6 @@ const runAgentConversation = async ({
   const agent = getAtlasAgent();
   const sessionId = sessionOverride || getSessionId(metadata);
   const previousConversation = getConversationEntry(sessionId);
-  const baseHistory = previousConversation?.history
-    ? [...previousConversation.history]
-    : [];
-  const conversationInput = [...baseHistory, user(prompt)];
 
   const runContextPayload = {
     authorizationHeader,
@@ -803,8 +799,15 @@ const runAgentConversation = async ({
     context: runContextPayload
   };
 
+  let conversationInput;
   if (previousConversation?.lastResponseId) {
     runOptions.previousResponseId = previousConversation.lastResponseId;
+    conversationInput = [user(prompt)];
+  } else {
+    const baseHistory = previousConversation?.history
+      ? [...previousConversation.history]
+      : [];
+    conversationInput = [...baseHistory, user(prompt)];
   }
 
   const result = await run(agent, conversationInput, runOptions);

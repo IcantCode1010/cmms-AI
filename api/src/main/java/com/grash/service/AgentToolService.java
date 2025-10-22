@@ -6,22 +6,31 @@ import com.grash.advancedsearch.SpecificationBuilder;
 import com.grash.dto.agent.AgentAssetSearchRequest;
 import com.grash.dto.agent.AgentAssetSummary;
 import com.grash.dto.agent.AgentToolResponse;
+import com.grash.dto.agent.AgentWorkOrderCreateRequest;
+import com.grash.dto.agent.AgentWorkOrderCreateResponse;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateRequest;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateResponse;
 import com.grash.dto.agent.AgentWorkOrderSearchRequest;
 import com.grash.dto.agent.AgentWorkOrderSummary;
+import com.grash.dto.agent.AgentWorkOrderUpdateRequest;
+import com.grash.dto.agent.AgentWorkOrderUpdateResponse;
+import com.grash.dto.workOrder.WorkOrderPostDTO;
 import com.grash.exception.CustomException;
 import com.grash.model.Asset;
 import com.grash.model.File;
 import com.grash.model.Labor;
+import com.grash.model.Location;
 import com.grash.model.Notification;
 import com.grash.model.OwnUser;
 import com.grash.model.Task;
+import com.grash.model.Team;
 import com.grash.model.WorkOrder;
+import com.grash.model.WorkOrderCategory;
 import com.grash.model.WorkOrderHistory;
 import com.grash.model.enums.AssetStatus;
 import com.grash.model.enums.EnumName;
 import com.grash.model.enums.NotificationType;
+import com.grash.model.enums.Priority;
 import com.grash.model.enums.RoleCode;
 import com.grash.model.enums.Status;
 import com.grash.model.enums.TimeStatus;
@@ -39,6 +48,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -68,6 +82,11 @@ public class AgentToolService {
     private final WorkOrderHistoryService workOrderHistoryService;
     private final NotificationService notificationService;
     private final FileService fileService;
+    private final UserService userService;
+    private final LocationService locationService;
+    private final AssetService assetService;
+    private final TeamService teamService;
+    private final WorkOrderCategoryService workOrderCategoryService;
 
     public AgentToolResponse<AgentWorkOrderSummary> searchWorkOrders(OwnUser user,
                                                                      AgentWorkOrderSearchRequest request) {
@@ -117,6 +136,138 @@ public class AgentToolService {
                 .map(this::toAssetSummary)
                 .collect(Collectors.toList());
         return AgentToolResponse.of(items);
+    }
+
+    @Transactional
+    public AgentWorkOrderCreateResponse createWorkOrder(OwnUser user,
+                                                        AgentWorkOrderCreateRequest request) {
+        ensureAuthorised(user);
+
+        if (request == null) {
+            throw new CustomException("Work order creation request missing", HttpStatus.BAD_REQUEST);
+        }
+
+        if (!StringUtils.hasText(request.getTitle())) {
+            throw new CustomException("Work order title is required", HttpStatus.BAD_REQUEST);
+        }
+
+        WorkOrderPostDTO workOrder = new WorkOrderPostDTO();
+        workOrder.setTitle(request.getTitle().trim());
+
+        if (StringUtils.hasText(request.getDescription())) {
+            workOrder.setDescription(request.getDescription().trim());
+        }
+
+        if (StringUtils.hasText(request.getPriority())) {
+            workOrder.setPriority(Priority.getPriorityFromString(request.getPriority()));
+        } else {
+            workOrder.setPriority(Priority.LOW);
+        }
+
+        if (StringUtils.hasText(request.getDueDate())) {
+            Date dueDate = parseDateValue(request.getDueDate());
+            if (dueDate != null) {
+                workOrder.setDueDate(dueDate);
+            }
+        }
+
+        if (StringUtils.hasText(request.getEstimatedStartDate())) {
+            Date estimatedStartDate = parseDateValue(request.getEstimatedStartDate());
+            if (estimatedStartDate != null) {
+                workOrder.setEstimatedStartDate(estimatedStartDate);
+            }
+        }
+
+        if (request.getEstimatedDurationHours() != null) {
+            workOrder.setEstimatedDuration(request.getEstimatedDurationHours());
+        }
+
+        if (request.getRequireSignature() != null) {
+            workOrder.setRequiredSignature(request.getRequireSignature());
+        }
+
+        if (request.getLocationId() != null) {
+            Location location = new Location();
+            location.setId(request.getLocationId());
+            workOrder.setLocation(location);
+        }
+
+        if (request.getAssetId() != null) {
+            Asset asset = new Asset();
+            asset.setId(request.getAssetId());
+            workOrder.setAsset(asset);
+        }
+
+        if (request.getTeamId() != null) {
+            Team team = new Team();
+            team.setId(request.getTeamId());
+            workOrder.setTeam(team);
+        }
+
+        if (request.getPrimaryUserId() != null) {
+            OwnUser primaryUser = new OwnUser();
+            primaryUser.setId(request.getPrimaryUserId());
+            workOrder.setPrimaryUser(primaryUser);
+        }
+
+        if (request.getAssignedUserIds() != null && !request.getAssignedUserIds().isEmpty()) {
+            List<OwnUser> assigned = request.getAssignedUserIds().stream()
+                    .filter(Objects::nonNull)
+                    .map(userId -> {
+                        OwnUser assignedUser = new OwnUser();
+                        assignedUser.setId(userId);
+                        return assignedUser;
+                    })
+                    .collect(Collectors.toCollection(ArrayList::new));
+            workOrder.setAssignedTo(assigned);
+        }
+
+        if (request.getCategoryId() != null) {
+            WorkOrderCategory category = new WorkOrderCategory();
+            category.setId(request.getCategoryId());
+            workOrder.setCategory(category);
+        }
+
+        workOrder.setCompany(user.getCompany());
+        workOrder.setCreatedBy(user.getId());
+        workOrder.setStatus(Status.OPEN);
+
+        WorkOrder created = workOrderService.create(workOrder, user.getCompany());
+
+        return AgentWorkOrderCreateResponse.builder()
+                .success(true)
+                .workOrder(AgentWorkOrderCreateResponse.WorkOrderSummary.builder()
+                        .id(created.getId())
+                        .code(StringUtils.hasText(created.getCustomId()) ? created.getCustomId() : null)
+                        .title(created.getTitle())
+                        .status(created.getStatus() != null ? created.getStatus().name() : Status.OPEN.name())
+                        .priority(created.getPriority() != null ? created.getPriority().name() : Priority.LOW.name())
+                        .createdAt(created.getCreatedAt())
+                        .build())
+                .message("Work order created successfully")
+                .build();
+    }
+
+    private Date parseDateValue(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String trimmed = value.trim();
+        try {
+            return Date.from(Instant.parse(trimmed));
+        } catch (DateTimeParseException instantException) {
+            try {
+                OffsetDateTime offsetDateTime = OffsetDateTime.parse(trimmed);
+                return Date.from(offsetDateTime.toInstant());
+            } catch (DateTimeParseException offsetException) {
+                try {
+                    LocalDate localDate = LocalDate.parse(trimmed);
+                    return Date.from(localDate.atStartOfDay(ZoneOffset.UTC).toInstant());
+                } catch (DateTimeParseException localDateException) {
+                    throw new CustomException("Invalid date format: " + trimmed, HttpStatus.BAD_REQUEST);
+                }
+            }
+        }
     }
 
     @Transactional
@@ -622,7 +773,6 @@ public class AgentToolService {
         List<String> fields = new ArrayList<>();
         fields.add("name");
         fields.add("customId");
-        fields.add("location.name");
         return fields;
     }
 
@@ -630,6 +780,214 @@ public class AgentToolService {
         SpecificationBuilder<T> builder = new SpecificationBuilder<>();
         criteria.getFilterFields().forEach(builder::with);
         return builder.build();
+    }
+
+    @Transactional
+    public AgentWorkOrderUpdateResponse updateWorkOrder(OwnUser user, String workOrderId, AgentWorkOrderUpdateRequest request) {
+        ensureAuthorised(user);
+
+        if (request == null) {
+            throw new CustomException("Work order update request missing", HttpStatus.BAD_REQUEST);
+        }
+
+        WorkOrder workOrder = resolveWorkOrder(user, workOrderId);
+        ensureUserCanModify(workOrder, user);
+
+        List<String> updatedFields = new ArrayList<>();
+
+        // Update title
+        if (request.hasTitleValue()) {
+            String newTitle = request.getTitle().get();
+            if (StringUtils.hasText(newTitle)) {
+                workOrder.setTitle(newTitle.trim());
+                updatedFields.add("title");
+            } else {
+                throw new CustomException("Title cannot be empty", HttpStatus.BAD_REQUEST);
+            }
+        }
+
+        // Update description
+        if (request.hasDescriptionValue()) {
+            String newDescription = request.getDescription().get();
+            workOrder.setDescription(newDescription != null ? newDescription.trim() : null);
+            updatedFields.add("description");
+        }
+
+        // Update priority
+        if (request.hasPriorityValue()) {
+            String priorityStr = request.getPriority().get();
+            if (StringUtils.hasText(priorityStr)) {
+                workOrder.setPriority(Priority.getPriorityFromString(priorityStr.trim()));
+                updatedFields.add("priority");
+            }
+        }
+
+        // Update due date
+        if (request.hasDueDateValue()) {
+            workOrder.setDueDate(request.getDueDate().get());
+            updatedFields.add("dueDate");
+        }
+
+        // Update estimated start date
+        if (request.hasEstimatedStartDateValue()) {
+            workOrder.setEstimatedStartDate(request.getEstimatedStartDate().get());
+            updatedFields.add("estimatedStartDate");
+        }
+
+        // Update estimated duration
+        if (request.hasEstimatedDurationValue()) {
+            Double duration = request.getEstimatedDurationHours().get();
+            workOrder.setEstimatedDuration(duration != null ? duration : 0.0);
+            updatedFields.add("estimatedDuration");
+        }
+
+        // Update require signature
+        if (request.hasRequireSignatureValue()) {
+            Boolean requireSignature = request.getRequireSignature().get();
+            workOrder.setRequiredSignature(requireSignature != null && requireSignature);
+            updatedFields.add("requireSignature");
+        }
+
+        // Update location
+        if (request.hasLocationIdValue()) {
+            Long locationId = request.getLocationId().get();
+            if (locationId != null) {
+                Location location = locationService.findById(locationId)
+                        .orElseThrow(() -> new CustomException("Location not found", HttpStatus.NOT_FOUND));
+                if (!Objects.equals(location.getCompany().getId(), user.getCompany().getId())) {
+                    throw new CustomException("Location belongs to another company", HttpStatus.FORBIDDEN);
+                }
+                workOrder.setLocation(location);
+            } else {
+                workOrder.setLocation(null);
+            }
+            updatedFields.add("location");
+        }
+
+        // Update asset
+        if (request.hasAssetIdValue()) {
+            Long assetId = request.getAssetId().get();
+            if (assetId != null) {
+                Asset asset = assetService.findById(assetId)
+                        .orElseThrow(() -> new CustomException("Asset not found", HttpStatus.NOT_FOUND));
+                if (!Objects.equals(asset.getCompany().getId(), user.getCompany().getId())) {
+                    throw new CustomException("Asset belongs to another company", HttpStatus.FORBIDDEN);
+                }
+                workOrder.setAsset(asset);
+            } else {
+                workOrder.setAsset(null);
+            }
+            updatedFields.add("asset");
+        }
+
+        // Update team
+        if (request.hasTeamIdValue()) {
+            Long teamId = request.getTeamId().get();
+            if (teamId != null) {
+                Team team = teamService.findById(teamId)
+                        .orElseThrow(() -> new CustomException("Team not found", HttpStatus.NOT_FOUND));
+                if (!Objects.equals(team.getCompany().getId(), user.getCompany().getId())) {
+                    throw new CustomException("Team belongs to another company", HttpStatus.FORBIDDEN);
+                }
+                workOrder.setTeam(team);
+            } else {
+                workOrder.setTeam(null);
+            }
+            updatedFields.add("team");
+        }
+
+        // Update primary user
+        if (request.hasPrimaryUserIdValue()) {
+            Long primaryUserId = request.getPrimaryUserId().get();
+            if (primaryUserId != null) {
+                OwnUser primaryUser = userService.findById(primaryUserId)
+                        .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
+                if (!Objects.equals(primaryUser.getCompany().getId(), user.getCompany().getId())) {
+                    throw new CustomException("User belongs to another company", HttpStatus.FORBIDDEN);
+                }
+                workOrder.setPrimaryUser(primaryUser);
+            } else {
+                workOrder.setPrimaryUser(null);
+            }
+            updatedFields.add("primaryUser");
+        }
+
+        // Update assigned users
+        if (request.hasAssignedUserIdsValue()) {
+            List<Long> assignedUserIds = request.getAssignedUserIds().get();
+            if (assignedUserIds != null && !assignedUserIds.isEmpty()) {
+                List<OwnUser> assignedUsers = new ArrayList<>();
+                for (Long userId : assignedUserIds) {
+                    OwnUser assignedUser = userService.findById(userId)
+                            .orElseThrow(() -> new CustomException("User with ID " + userId + " not found", HttpStatus.NOT_FOUND));
+                    if (!Objects.equals(assignedUser.getCompany().getId(), user.getCompany().getId())) {
+                        throw new CustomException("User with ID " + userId + " belongs to another company", HttpStatus.FORBIDDEN);
+                    }
+                    assignedUsers.add(assignedUser);
+                }
+                workOrder.setAssignedTo(assignedUsers);
+            } else {
+                workOrder.setAssignedTo(new ArrayList<>());
+            }
+            updatedFields.add("assignedUsers");
+        }
+
+        // Update category
+        if (request.hasCategoryIdValue()) {
+            Long categoryId = request.getCategoryId().get();
+            if (categoryId != null) {
+                WorkOrderCategory category = workOrderCategoryService.findById(categoryId)
+                        .orElseThrow(() -> new CustomException("Category not found", HttpStatus.NOT_FOUND));
+                if (!Objects.equals(category.getCompanySettings().getCompany().getId(), user.getCompany().getId())) {
+                    throw new CustomException("Category belongs to another company", HttpStatus.FORBIDDEN);
+                }
+                workOrder.setCategory(category);
+            } else {
+                workOrder.setCategory(null);
+            }
+            updatedFields.add("category");
+        }
+
+        WorkOrder savedWorkOrder = workOrderService.saveAndFlush(workOrder);
+
+        // Create history entry
+        if (!updatedFields.isEmpty()) {
+            String updateSummary = "Agent updated: " + String.join(", ", updatedFields);
+            WorkOrderHistory history = WorkOrderHistory.builder()
+                    .workOrder(savedWorkOrder)
+                    .user(user)
+                    .name(updateSummary)
+                    .build();
+            workOrderHistoryService.create(history);
+        }
+
+        return AgentWorkOrderUpdateResponse.builder()
+                .success(true)
+                .workOrder(buildWorkOrderUpdateSummary(savedWorkOrder))
+                .message("Work order updated successfully")
+                .updatedFields(updatedFields)
+                .build();
+    }
+
+    private AgentWorkOrderUpdateResponse.WorkOrderUpdateSummary buildWorkOrderUpdateSummary(WorkOrder workOrder) {
+        List<String> assignedUserNames = workOrder.getAssignedTo() != null
+                ? workOrder.getAssignedTo().stream()
+                .map(OwnUser::getFullName)
+                .collect(Collectors.toList())
+                : Collections.emptyList();
+
+        return AgentWorkOrderUpdateResponse.WorkOrderUpdateSummary.builder()
+                .id(workOrder.getId())
+                .code(StringUtils.hasText(workOrder.getCustomId()) ? workOrder.getCustomId() : null)
+                .title(workOrder.getTitle())
+                .description(workOrder.getDescription())
+                .status(workOrder.getStatus() != null ? workOrder.getStatus().name() : null)
+                .priority(workOrder.getPriority() != null ? workOrder.getPriority().name() : null)
+                .dueDate(workOrder.getDueDate())
+                .primaryUserName(workOrder.getPrimaryUser() != null ? workOrder.getPrimaryUser().getFullName() : null)
+                .assignedUserNames(assignedUserNames)
+                .updatedAt(workOrder.getUpdatedAt())
+                .build();
     }
 }
 

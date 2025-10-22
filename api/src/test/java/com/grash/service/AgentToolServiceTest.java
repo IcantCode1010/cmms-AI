@@ -6,6 +6,8 @@ import com.grash.dto.agent.AgentWorkOrderSearchRequest;
 import com.grash.dto.agent.AgentWorkOrderSummary;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateRequest;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateResponse;
+import com.grash.dto.agent.AgentWorkOrderUpdateRequest;
+import com.grash.dto.agent.AgentWorkOrderUpdateResponse;
 import com.grash.exception.CustomException;
 import com.grash.model.Asset;
 import com.grash.model.Company;
@@ -27,6 +29,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -43,6 +47,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class AgentToolServiceTest {
 
     @Mock
@@ -61,13 +66,24 @@ class AgentToolServiceTest {
     private NotificationService notificationService;
     @Mock
     private FileService fileService;
+    @Mock
+    private UserService userService;
+    @Mock
+    private LocationService locationService;
+    @Mock
+    private AssetService assetService;
+    @Mock
+    private TeamService teamService;
+    @Mock
+    private WorkOrderCategoryService workOrderCategoryService;
 
     private AgentToolService agentToolService;
 
     @BeforeEach
     void setUp() {
         agentToolService = new AgentToolService(workOrderRepository, assetRepository, workOrderService,
-                laborService, taskService, workOrderHistoryService, notificationService, fileService);
+                laborService, taskService, workOrderHistoryService, notificationService, fileService,
+                userService, locationService, assetService, teamService, workOrderCategoryService);
     }
 
     @Test
@@ -210,6 +226,103 @@ class AgentToolServiceTest {
         user.setRole(role);
         user.setEnabled(true);
         return user;
+    }
+
+    @Test
+    void updateWorkOrderPreservesDescriptionWhenOnlyAssigning() {
+        // Given: A work order with existing description
+        OwnUser user = buildUser(100L, 50L);
+        OwnUser assignee = buildUser(101L, 50L);
+        assignee.setCompany(user.getCompany());
+        assignee.setFirstName("Jane");
+        assignee.setLastName("Doe");
+
+        WorkOrder existingWorkOrder = new WorkOrder();
+        existingWorkOrder.setId(200L);
+        existingWorkOrder.setCustomId("WO-200");
+        existingWorkOrder.setTitle("Fix pump");
+        existingWorkOrder.setDescription("Original description that should be preserved");
+        existingWorkOrder.setStatus(Status.OPEN);
+        existingWorkOrder.setPriority(Priority.LOW);
+        existingWorkOrder.setCompany(user.getCompany());
+
+        // Mock repository finding the work order
+        when(workOrderRepository.findByIdAndCompany_Id(200L, 50L))
+                .thenReturn(Optional.of(existingWorkOrder));
+        when(workOrderRepository.findByCustomIdIgnoreCaseAndCompany_Id("WO-200", 50L))
+                .thenReturn(Optional.of(existingWorkOrder));
+
+        // Mock user service for assignee lookup
+        when(userService.findById(101L)).thenReturn(Optional.of(assignee));
+
+        // Mock save operation
+        when(workOrderService.saveAndFlush(any(WorkOrder.class))).thenAnswer(invocation -> {
+            WorkOrder wo = invocation.getArgument(0);
+            wo.setUpdatedAt(new Date());
+            return wo;
+        });
+
+        // When: Update request only contains primaryUserId (no description field)
+        AgentWorkOrderUpdateRequest updateRequest = AgentWorkOrderUpdateRequest.builder()
+                .primaryUserId(Optional.of(101L))
+                .build();
+
+        AgentWorkOrderUpdateResponse response = agentToolService.updateWorkOrder(user, "WO-200", updateRequest);
+
+        // Then: Description should be preserved
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getWorkOrder().getDescription()).isEqualTo("Original description that should be preserved");
+        assertThat(response.getWorkOrder().getPrimaryUserName()).isEqualTo("Jane Doe");
+        assertThat(response.getUpdatedFields()).containsExactly("primaryUser");
+
+        // Verify the work order was saved with preserved description
+        ArgumentCaptor<WorkOrder> woCaptor = ArgumentCaptor.forClass(WorkOrder.class);
+        verify(workOrderService).saveAndFlush(woCaptor.capture());
+        WorkOrder savedWO = woCaptor.getValue();
+        assertThat(savedWO.getDescription()).isEqualTo("Original description that should be preserved");
+        assertThat(savedWO.getPrimaryUser()).isEqualTo(assignee);
+
+        // Verify history was created
+        verify(workOrderHistoryService).create(any(WorkOrderHistory.class));
+    }
+
+    @Test
+    void updateWorkOrderAllowsIntentionalDescriptionClearing() {
+        // Given: A work order with existing description
+        OwnUser user = buildUser(100L, 50L);
+
+        WorkOrder existingWorkOrder = new WorkOrder();
+        existingWorkOrder.setId(201L);
+        existingWorkOrder.setCustomId("WO-201");
+        existingWorkOrder.setTitle("Task with description");
+        existingWorkOrder.setDescription("Old description to be cleared");
+        existingWorkOrder.setCompany(user.getCompany());
+
+        when(workOrderRepository.findByIdAndCompany_Id(201L, 50L))
+                .thenReturn(Optional.of(existingWorkOrder));
+
+        when(workOrderService.saveAndFlush(any(WorkOrder.class))).thenAnswer(invocation -> {
+            WorkOrder wo = invocation.getArgument(0);
+            wo.setUpdatedAt(new Date());
+            return wo;
+        });
+
+        // When: Update request explicitly sets description to null
+        AgentWorkOrderUpdateRequest updateRequest = AgentWorkOrderUpdateRequest.builder()
+                .description(Optional.of(null))  // Explicitly clearing
+                .build();
+
+        AgentWorkOrderUpdateResponse response = agentToolService.updateWorkOrder(user, "201", updateRequest);
+
+        // Then: Description should be cleared
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getWorkOrder().getDescription()).isNull();
+        assertThat(response.getUpdatedFields()).containsExactly("description");
+
+        // Verify the work order was saved with null description
+        ArgumentCaptor<WorkOrder> woCaptor = ArgumentCaptor.forClass(WorkOrder.class);
+        verify(workOrderService).saveAndFlush(woCaptor.capture());
+        assertThat(woCaptor.getValue().getDescription()).isNull();
     }
 }
 

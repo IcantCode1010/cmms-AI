@@ -13,7 +13,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 4005;
 const API_BASE = process.env.API_BASE || "http://api:8080";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4";
 const DEFAULT_AGENT_ID = process.env.AGENT_CHATKIT_AGENT_ID || "";
 const MAX_TOOL_RESULTS = (() => {
   const parsed = Number.parseInt(
@@ -314,19 +314,40 @@ const summariseWorkOrders = (workOrders) => {
   if (!Array.isArray(workOrders) || !workOrders.length) {
     return "No matching work orders were returned.";
   }
-  const headline = `Found ${workOrders.length} work ${
-    workOrders.length === 1 ? "order" : "orders"
-  }.`;
+
+  const priorityEmoji = {
+    HIGH: "🔴",
+    MEDIUM: "🟡",
+    LOW: "🟢",
+    NONE: "⚪"
+  };
+
+  const headline = `### 📋 Work Orders (${workOrders.length})\n`;
   const details = workOrders
     .map((order) => {
+      const emoji = priorityEmoji[order.priority] || "📝";
+      const code = order.code || order.id;
+      const title = order.title || "Work order";
       const meta = [];
-      if (order.priority) meta.push(`Priority ${order.priority}`);
-      if (order.status) meta.push(`Status ${order.status}`);
-      if (order.asset) meta.push(`Asset ${order.asset}`);
-      const suffix = meta.length ? ` (${meta.join("; ")})` : "";
-      return `- ${order.code || order.id}: ${order.title || "Work order"}${suffix}`;
+
+      if (order.status) meta.push(`Status: **${order.status}**`);
+      if (order.priority) meta.push(`Priority: ${emoji} ${order.priority}`);
+      if (order.asset) meta.push(`Asset: **${order.asset}**`);
+      if (order.dueDate) {
+        try {
+          const date = new Date(order.dueDate);
+          const formatted = date.toLocaleDateString();
+          meta.push(`Due: ${formatted}`);
+        } catch (e) {
+          // Skip invalid dates
+        }
+      }
+
+      const metaLine = meta.length ? `\n  - ${meta.join(" • ")}` : "";
+      return `- **${code}**: ${title}${metaLine}`;
     })
-    .join("\n");
+    .join("\n\n");
+
   return `${headline}\n${details}`;
 };
 
@@ -334,16 +355,34 @@ const summariseAssets = (assets) => {
   if (!Array.isArray(assets) || !assets.length) {
     return "No assets matched that request.";
   }
-  return assets
+
+  const statusEmoji = {
+    OPERATIONAL: "✅",
+    DOWN: "⚠️",
+    STANDBY: "⏸️",
+    MODERNIZATION: "🔧",
+    INSPECTION_SCHEDULED: "🔍",
+    COMMISSIONING: "🚀",
+    EMERGENCY_SHUTDOWN: "🔴"
+  };
+
+  const headline = `### 🏭 Assets (${assets.length})\n`;
+  const details = assets
     .map((asset) => {
+      const emoji = statusEmoji[asset.status] || "📦";
+      const name = asset.name || asset.id;
       const meta = [];
-      if (asset.status) meta.push(`Status ${asset.status}`);
-      if (asset.location) meta.push(`Location ${asset.location}`);
-      if (asset.customId) meta.push(`ID ${asset.customId}`);
-      const suffix = meta.length ? ` (${meta.join("; ")})` : "";
-      return `- ${asset.name || asset.id}${suffix}`;
+
+      if (asset.status) meta.push(`Status: ${emoji} **${asset.status}**`);
+      if (asset.location) meta.push(`Location: **${asset.location}**`);
+      if (asset.customId) meta.push(`ID: \`${asset.customId}\``);
+
+      const metaLine = meta.length ? `\n  - ${meta.join(" • ")}` : "";
+      return `- **${name}**${metaLine}`;
     })
-    .join("\n");
+    .join("\n\n");
+
+  return `${headline}\n${details}`;
 };
 
 const postAgentToolRequest = async ({
@@ -389,6 +428,16 @@ const ensureRoleAccess = (userContext, allowedRoles, toolName) => {
   }
 };
 
+const buildCreationDraft = (sessionId, data, summary) => ({
+  agentSessionId: sessionId,
+  operationType: "create_work_order",
+  payload: {
+    summary,
+    data
+  },
+  summary
+});
+
 const buildCompletionDraft = (sessionId, workOrder, userContext) => {
   const workOrderId = workOrder?.id || workOrder?.workOrderId || workOrder?.code;
   const summary = `Complete work order ${workOrder?.code || workOrderId}`;
@@ -408,6 +457,180 @@ const buildCompletionDraft = (sessionId, workOrder, userContext) => {
 };
 
 const ensureRunContext = (runContext) => runContext?.context || {};
+
+const coerceOptionalNumber = (value, fieldName) => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new ToolCallError(fieldName + " must be numeric.");
+    }
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      throw new ToolCallError(`${fieldName} must be numeric (received "${value}").`);
+    }
+    return parsed;
+  }
+  throw new ToolCallError(fieldName + " must be numeric.");
+};
+
+const pickFirstString = (...values) => {
+  for (const value of values) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    } else if (typeof value === "number") {
+      const asString = String(value).trim();
+      if (asString) {
+        return asString;
+      }
+    }
+  }
+  return undefined;
+};
+
+const normalizeWhitespace = (value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+  return value.trim().replace(/\s+/g, " ");
+};
+
+const capitalizeFirstLetter = (value) => {
+  if (typeof value !== "string" || !value) {
+    return value;
+  }
+  return value.replace(/^[a-z]/, (match) => match.toUpperCase());
+};
+
+const enhanceTitle = (value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const cleaned = normalizeWhitespace(value);
+  if (!cleaned) {
+    return cleaned;
+  }
+  return capitalizeFirstLetter(cleaned);
+};
+
+const enhanceDescription = (value, fallbackTitle) => {
+  if (typeof value !== "string" || !value.trim()) {
+    if (!fallbackTitle) {
+      return undefined;
+    }
+    return `${fallbackTitle} (details pending update).`;
+  }
+  const cleaned = normalizeWhitespace(value);
+  if (!cleaned) {
+    if (!fallbackTitle) {
+      return undefined;
+    }
+    return `${fallbackTitle} (details pending update).`;
+  }
+  const capitalized = capitalizeFirstLetter(cleaned);
+  if (/[.!?]$/.test(capitalized)) {
+    return capitalized;
+  }
+  return `${capitalized}.`;
+};
+
+const parseBooleanLike = (value, fieldName) => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+    if (["true", "yes", "y", "1"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "no", "n", "0"].includes(normalized)) {
+      return false;
+    }
+    throw new ToolCallError(`${fieldName} must be true or false (received "${value}").`);
+  }
+  throw new ToolCallError(`${fieldName} must be a boolean-like value.`);
+};
+
+const extractNumericId = (candidate, fieldName) => {
+  if (candidate === undefined || candidate === null || candidate === "") {
+    return undefined;
+  }
+  try {
+    return coerceOptionalNumber(candidate, fieldName);
+  } catch (error) {
+    logger.warn("Skipping non-numeric identifier", { fieldName, candidate });
+    return undefined;
+  }
+};
+
+const normaliseCreationInput = (input) => {
+  const normalizedInput =
+    input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const summaryOverride = pickFirstString(
+    normalizedInput.summary,
+    normalizedInput.summaryText,
+    normalizedInput.summaryOverride,
+    normalizedInput.brief
+  );
+
+  const title = pickFirstString(
+    normalizedInput.title,
+    normalizedInput.name,
+    normalizedInput.workOrderTitle,
+    normalizedInput.requestTitle,
+    normalizedInput.subject,
+    normalizedInput.ticketTitle,
+    normalizedInput.task,
+    summaryOverride
+  );
+  if (!title) {
+    throw new ToolCallError("title is required to prepare a work order creation draft.");
+  }
+
+  const enhancedTitle = enhanceTitle(title);
+  const data = {
+    title: enhancedTitle,
+    priority: "LOW"
+  };
+
+  const description = pickFirstString(
+    normalizedInput.description,
+    normalizedInput.details,
+    normalizedInput.notes,
+    normalizedInput.problemStatement,
+    normalizedInput.reason,
+    normalizedInput.message,
+    normalizedInput.body
+  );
+  const enhancedDescription = enhanceDescription(description, enhancedTitle);
+  if (enhancedDescription) {
+    data.description = enhancedDescription;
+  }
+
+  const sanitizedSummaryOverride = summaryOverride
+    ? capitalizeFirstLetter(normalizeWhitespace(summaryOverride))
+    : undefined;
+
+  return { data, summaryOverride: sanitizedSummaryOverride };
+};
+
 
 const viewWorkOrdersTool = tool({
   name: "view_work_orders",
@@ -606,6 +829,41 @@ const getUserContextTool = tool({
   }
 });
 
+const prepareCreationDraftTool = tool({
+  name: "prepare_work_order_creation_draft",
+  description:
+    "Capture a work order title and short description, then stage a draft for user confirmation. REQUIRED: title (work order name). OPTIONAL: description (one sentence). Always collect a title before calling this tool; the proxy will enhance the text and default the priority to LOW. Leave all other fields for the user to update later.",
+  parameters: z
+    .object({
+      title: z.string().min(1, "Title is required for work order creation"),
+      description: z.string().optional().nullable(),
+      summary: z.string().optional().nullable()
+    })
+    .strict(),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const { userContext, sessionId, drafts } = ctx;
+    ensureRoleAccess(
+      userContext,
+      ALLOWED_AGENT_ROLES,
+      "prepare_work_order_creation_draft"
+    );
+    requireTenantId(userContext);
+
+    // Validate required fields
+    if (!input?.title || String(input.title).trim() === "") {
+      throw new ToolCallError("Title is required to create a work order. Please provide a work order title.");
+    }
+
+    const { data: sanitized, summaryOverride } = normaliseCreationInput(input);
+    const summary = summaryOverride || `Create work order: ${sanitized.title}`;
+    const draft = buildCreationDraft(sessionId, sanitized, summary);
+    logger.info("Prepared work order creation draft", { sessionId, summary, keys: Object.keys(sanitized) });
+    drafts.push(draft);
+    return JSON.stringify({ status: "draft_created", draft });
+  }
+});
+
 const prepareCompletionDraftTool = tool({
   name: "prepare_work_order_completion_draft",
   description:
@@ -650,13 +908,195 @@ const prepareCompletionDraftTool = tool({
   }
 });
 
+const createWorkOrderDirectlyTool = tool({
+  name: "create_work_order_immediately",
+  description:
+    "Create a work order immediately without user confirmation. REQUIRED: title (work order name). OPTIONAL: description, priority (NONE/LOW/MEDIUM/HIGH), dueDate (ISO 8601), estimatedStartDate (ISO 8601), estimatedDurationHours, requireSignature, locationId, assetId, teamId, primaryUserId, assignedUserIds (array), categoryId. USE ONLY when the user explicitly requests immediate creation with 'create now' or 'create immediately'. For normal creation workflows, use prepare_work_order_creation_draft instead.",
+  parameters: z
+    .object({
+      title: z.string().min(1, "Title is required for work order creation"),
+      description: z.string().optional().nullable(),
+      priority: z.enum(["NONE", "LOW", "MEDIUM", "HIGH"]).optional().nullable(),
+      dueDate: z.string().optional().nullable(),
+      estimatedStartDate: z.string().optional().nullable(),
+      estimatedDurationHours: z.number().optional().nullable(),
+      requireSignature: z.boolean().optional().nullable(),
+      locationId: z.number().int().optional().nullable(),
+      assetId: z.number().int().optional().nullable(),
+      teamId: z.number().int().optional().nullable(),
+      primaryUserId: z.number().int().optional().nullable(),
+      assignedUserIds: z.array(z.number().int()).optional().nullable(),
+      categoryId: z.number().int().optional().nullable()
+    })
+    .strict(),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const {
+      authorizationHeader,
+      userContext,
+      sessionId,
+      toolLogs
+    } = ctx;
+    ensureRoleAccess(
+      userContext,
+      ALLOWED_AGENT_ROLES,
+      "create_work_order_immediately"
+    );
+    requireTenantId(userContext);
+
+    // Validate required fields
+    if (!input?.title || String(input.title).trim() === "") {
+      throw new ToolCallError("Title is required to create a work order. Please provide a work order title.");
+    }
+
+    const logEntry = {
+      toolName: "create_work_order_immediately",
+      arguments: input,
+      resultCount: 0,
+      status: "queued",
+      sessionId
+    };
+
+    try {
+      const response = await postAgentToolRequest({
+        path: "/api/agent/tools/work-orders/create",
+        authorizationHeader,
+        body: input
+      });
+
+      logEntry.resultCount = 1;
+      logEntry.status = "success";
+      toolLogs.push(logEntry);
+
+      return JSON.stringify({
+        status: "created",
+        workOrder: response.workOrder,
+        message: response.message || "Work order created successfully"
+      });
+    } catch (error) {
+      logEntry.status = "error";
+      logEntry.error = error.message;
+      toolLogs.push(logEntry);
+      throw error;
+    }
+  }
+});
+
+const updateWorkOrderTool = tool({
+  name: "update_work_order",
+  description:
+    "Update an existing work order's details or assignment. Use this when the user wants to modify a work order (change title, description, priority, assign users, etc.). REQUIRED: workOrderId (work order ID or code). OPTIONAL: Any fields to update. Only specified fields will be modified, others remain unchanged.",
+  parameters: z.object({
+    workOrderId: z.union([z.string(), z.number()]),
+    title: z.string().optional().nullable(),
+    description: z.string().optional().nullable(),
+    priority: z.enum(["NONE", "LOW", "MEDIUM", "HIGH"]).optional().nullable(),
+    dueDate: z.string().optional().nullable(),
+    estimatedStartDate: z.string().optional().nullable(),
+    estimatedDurationHours: z.number().optional().nullable(),
+    requireSignature: z.boolean().optional().nullable(),
+    locationId: z.number().int().optional().nullable(),
+    assetId: z.number().int().optional().nullable(),
+    teamId: z.number().int().optional().nullable(),
+    primaryUserId: z.number().int().optional().nullable(),
+    assignedUserIds: z.array(z.number().int()).optional().nullable(),
+    categoryId: z.number().int().optional().nullable()
+  }),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const {
+      authorizationHeader,
+      userContext,
+      sessionId,
+      toolLogs
+    } = ctx;
+    ensureRoleAccess(
+      userContext,
+      ALLOWED_AGENT_ROLES,
+      "update_work_order"
+    );
+    requireTenantId(userContext);
+
+    if (!input?.workOrderId) {
+      throw new ToolCallError("Work order ID is required to update a work order.");
+    }
+
+    const logEntry = {
+      toolName: "update_work_order",
+      arguments: input,
+      resultCount: 0,
+      status: "queued",
+      sessionId
+    };
+
+    try {
+      const response = await postAgentToolRequest({
+        path: `/api/agent/tools/work-orders/${input.workOrderId}/update`,
+        authorizationHeader,
+        body: input
+      });
+
+      logEntry.resultCount = 1;
+      logEntry.status = "success";
+      toolLogs.push(logEntry);
+
+      return JSON.stringify({
+        status: "updated",
+        workOrder: response.workOrder,
+        message: response.message || "Work order updated successfully",
+        updatedFields: response.updatedFields || []
+      });
+    } catch (error) {
+      logEntry.status = "error";
+      logEntry.error = error.message;
+      toolLogs.push(logEntry);
+      throw error;
+    }
+  }
+});
+
 const buildAgentInstructions = (runContext) => {
   const displayName = resolveDisplayName(runContext?.context?.userContext) || "there";
   return [
     "You are Atlas Assistant, a maintenance copilot for Atlas CMMS.",
     `Always greet ${displayName} by name in your first sentence.`,
-    "Use the available tools to fetch real data instead of guessing.",
-    "Summarise tool outputs clearly, reference work order or asset identifiers, and suggest next steps when helpful.",
+    "",
+    "CRITICAL TOOL USAGE RULES:",
+    "- You MUST call tools to fetch real data. NEVER guess or make up information.",
+    "- When users ask about work orders, you MUST call view_work_orders tool.",
+    "- When users ask about assets or equipment, you MUST call view_assets tool.",
+    "- When users want to create a work order, you MUST call prepare_work_order_creation_draft or create_work_order_immediately.",
+    "- When users want to update or modify an existing work order (assign, change priority, update description, etc.), you MUST call update_work_order tool.",
+    "- ALWAYS use tools before responding. Do not respond without using tools first.",
+    "",
+    "WORK ORDER CREATION:",
+    "- When the user wants to create a work order, collect a concise title (required) and optionally a description.",
+    "- ALWAYS use prepare_work_order_creation_draft for normal creation - this lets the user review and edit details before finalizing.",
+    "- ONLY use create_work_order_immediately if the user explicitly says 'create now', 'create immediately', or similar urgent language.",
+    "- The draft tool will enhance the text and default priority to LOW; other details can be updated after creation.",
+    "",
+    "FORMATTING REQUIREMENTS:",
+    "- Format all responses using Markdown for clarity and readability",
+    "- Use **bold** for work order codes, asset names, and important identifiers",
+    "- Use bullet lists (- item) for multiple items",
+    "- Use numbered lists (1. item) for sequential steps or priorities",
+    "- Use tables for structured data comparisons when appropriate",
+    "- Use > blockquotes for important warnings or notes",
+    "- Add relevant emojis (⚠️ for warnings, ✅ for success, 📋 for lists, 🔧 for maintenance)",
+    "- Group related information under clear headers (### Header)",
+    "",
+    "When presenting work orders:",
+    "- Start with a summary count",
+    "- List each work order with **bold code**",
+    "- Show priority with emojis: 🔴 HIGH, 🟡 MEDIUM, 🟢 LOW",
+    "- Include status badges and due dates clearly",
+    "- End with actionable next steps",
+    "",
+    "When presenting assets:",
+    "- Group by status or location when multiple assets shown",
+    "- Use status indicators: ✅ OPERATIONAL, ⚠️ DOWN, ⏸️ STANDBY",
+    "- Highlight critical information",
+    "",
     "If the user requests to close or complete a work order, call prepare_work_order_completion_draft after identifying the correct record.",
     "If information is missing, explain what else you need and provide actionable guidance."
   ].join(" ");
@@ -672,11 +1112,15 @@ const getAtlasAgent = (() => {
       name: "Atlas Maintenance Copilot",
       instructions: (runContext) => buildAgentInstructions(runContext),
       model: OPENAI_MODEL,
+      temperature: 0,  // Deterministic responses for better tool usage
       tools: [
         viewWorkOrdersTool,
         viewAssetsTool,
         getUserContextTool,
-        prepareCompletionDraftTool
+        prepareCreationDraftTool,
+        prepareCompletionDraftTool,
+        createWorkOrderDirectlyTool,
+        updateWorkOrderTool
       ]
     });
     return cachedAgent;
@@ -698,18 +1142,26 @@ const getConversationEntry = (sessionId) => {
   return entry;
 };
 
-const saveConversationEntry = (sessionId, runResult) => {
+const saveConversationEntry = (sessionId, runResult, userContext = null) => {
   if (!sessionId || !runResult) {
     return;
   }
   if (!Array.isArray(runResult.history)) {
     return;
   }
-  conversationStore.set(sessionId, {
+  const entry = {
     history: runResult.history,
     lastResponseId: runResult.lastResponseId,
     updatedAt: Date.now()
-  });
+  };
+
+  // Store user identity to detect account switches
+  if (userContext) {
+    entry.userId = userContext.id || userContext.userId || userContext.sub;
+    entry.companyId = resolveCompanyId(userContext);
+  }
+
+  conversationStore.set(sessionId, entry);
 };
 
 const getSessionId = (metadata = {}) => {
@@ -730,6 +1182,7 @@ const deriveFinalMessage = ({
   userContext,
   prompt
 }) => {
+  // First, try to get the agent's formatted response
   if (runResult?.finalOutput && typeof runResult.finalOutput === "string") {
     const trimmed = runResult.finalOutput.trim();
     if (trimmed) {
@@ -737,6 +1190,7 @@ const deriveFinalMessage = ({
     }
   }
 
+  // Check conversation history for assistant's response
   if (Array.isArray(runResult?.history)) {
     for (let idx = runResult.history.length - 1; idx >= 0; idx -= 1) {
       const item = runResult.history[idx];
@@ -756,20 +1210,31 @@ const deriveFinalMessage = ({
     }
   }
 
+  // Fallback: Build a formatted response from tool results
   const displayName = resolveDisplayName(userContext) || "there";
   const toolResults = runContext?.toolResults || {};
+  const insights = runContext?.insights || [];
+
+  // If we have insights (formatted summaries), use them
+  if (insights.length > 0) {
+    const greeting = `Hi **${displayName}**, here's what I found:\n\n`;
+    return greeting + insights.join("\n\n");
+  }
+
+  // Legacy fallback with formatted summaries
   if (toolResults.view_work_orders?.length) {
-    return `Hi ${displayName}, here's what I found:\n${summariseWorkOrders(
+    return `Hi **${displayName}**, here's what I found:\n\n${summariseWorkOrders(
       toolResults.view_work_orders
     )}`;
   }
   if (toolResults.view_assets?.length) {
-    return `Hi ${displayName}, here are the latest asset details:\n${summariseAssets(
+    return `Hi **${displayName}**, here are the latest asset details:\n\n${summariseAssets(
       toolResults.view_assets
     )}`;
   }
 
-  return `Hi ${displayName}, I'm still processing your request. Try asking about open work orders or assets to get started.`;
+  // Default message with formatting
+  return `Hi **${displayName}**, I'm still processing your request. Try asking about:\n\n- 📋 Open work orders\n- 🏭 Assets and equipment\n- 🔧 Maintenance tasks`;
 };
 
 const runAgentConversation = async ({
@@ -782,7 +1247,32 @@ const runAgentConversation = async ({
 }) => {
   const agent = getAtlasAgent();
   const sessionId = sessionOverride || getSessionId(metadata);
-  const previousConversation = getConversationEntry(sessionId);
+  let previousConversation = getConversationEntry(sessionId);
+
+  // SECURITY: Verify the conversation belongs to the current user
+  // If user identity changed, clear the old conversation to prevent context leakage
+  if (previousConversation && userContext) {
+    const currentUserId = userContext.id || userContext.userId || userContext.sub;
+    const currentCompanyId = resolveCompanyId(userContext);
+
+    if (previousConversation.userId && previousConversation.userId !== currentUserId) {
+      logger.info("User identity changed - clearing old conversation", {
+        sessionId,
+        oldUserId: previousConversation.userId,
+        newUserId: currentUserId
+      });
+      conversationStore.delete(sessionId);
+      previousConversation = null;
+    } else if (previousConversation.companyId && previousConversation.companyId !== currentCompanyId) {
+      logger.info("Company context changed - clearing old conversation", {
+        sessionId,
+        oldCompanyId: previousConversation.companyId,
+        newCompanyId: currentCompanyId
+      });
+      conversationStore.delete(sessionId);
+      previousConversation = null;
+    }
+  }
 
   const runContextPayload = {
     authorizationHeader,
@@ -794,6 +1284,16 @@ const runAgentConversation = async ({
     drafts: [],
     insights: []
   };
+
+  const agentInstructions = buildAgentInstructions({ context: runContextPayload });
+  logger.info("Starting agent conversation", {
+    sessionId,
+    prompt: prompt.substring(0, 100),
+    agentModel: agent.model || OPENAI_MODEL,
+    hasTools: agent.tools ? agent.tools.length : 0,
+    instructionsLength: agentInstructions.length,
+    instructionsPreview: agentInstructions.substring(0, 200)
+  });
 
   const runOptions = {
     context: runContextPayload
@@ -810,8 +1310,29 @@ const runAgentConversation = async ({
     conversationInput = [...baseHistory, user(prompt)];
   }
 
+  logger.info("Calling OpenAI Agent SDK", {
+    sessionId,
+    inputLength: conversationInput.length,
+    hasPreviousResponse: !!previousConversation?.lastResponseId
+  });
+
+  // Add parallel tool calls configuration
+  runOptions.parallel_tool_calls = true;
+
   const result = await run(agent, conversationInput, runOptions);
-  saveConversationEntry(sessionId, result);
+
+  // Debug: show full agent result + run context so we can see any function_call/tool events
+  logger.debug("<<AGENT RUN RESULT RAW>>", { result });
+  logger.debug("<<RUN CONTEXT AFTER RUN>>", { runContextPayload });
+
+  logger.info("Agent execution completed", {
+    sessionId,
+    toolCallsMade: runContextPayload.toolLogs.length,
+    draftsMade: runContextPayload.drafts.length,
+    hasOutput: !!result?.finalOutput
+  });
+
+  saveConversationEntry(sessionId, result, userContext);
   const finalOutput = deriveFinalMessage({
     runResult: result,
     runContext: runContextPayload,
@@ -1014,13 +1535,77 @@ app.post("/v1/chat", async (req, res) => {
   }
 });
 
+// Temporary test route - force tool call to verify tool wiring
+app.post("/debug/force-create-test", async (req, res) => {
+  const authorizationHeader = req.headers.authorization;
+  if (!authorizationHeader) {
+    return res.status(401).json({ error: "Authorization required" });
+  }
+
+  try {
+    const userContext = await fetchUserContext(authorizationHeader);
+    const sessionId = crypto.randomUUID();
+    const runContextPayload = {
+      authorizationHeader,
+      userContext,
+      sessionId,
+      metadata: {},
+      toolLogs: [],
+      toolResults: {},
+      drafts: [],
+      insights: []
+    };
+
+    // Make the instruction explicit so the model MUST call the tool
+    const prompt = `CALL_TOOL: use prepare_work_order_creation_draft tool with
+    { "title": "HVAC maintenance", "description": "HVAC minutes in the main building" }
+    Do not reply with text, only call the tool.`;
+
+    const agent = getAtlasAgent();
+    const result = await run(agent, [user(prompt)], { context: runContextPayload });
+
+    logger.debug("force-create result", { result, runContextPayload });
+
+    res.json({
+      success: true,
+      toolCallsMade: runContextPayload.toolLogs.length,
+      draftsMade: runContextPayload.drafts.length,
+      result: {
+        hasOutput: !!result?.finalOutput,
+        historyLength: result?.history?.length || 0
+      },
+      runContextPayload
+    });
+  } catch (error) {
+    logger.error("Force create test failed", { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
 if (require.main === module) {
   app.listen(PORT, () => {
     logger.info(`Agents proxy listening on port ${PORT}`, {
       apiBase: API_BASE,
       openaiConfigured: Boolean(OPENAI_API_KEY)
     });
+
+    // Log registered tools for verification
+    const agent = getAtlasAgent();
+    logger.info("Registered agent tools", {
+      tools: agent.tools.map(t => t.name || t?.parameters?.name || "unnamed"),
+      toolCount: agent.tools.length,
+      model: agent.model || OPENAI_MODEL,
+      temperature: agent.temperature
+    });
   });
 }
 
 module.exports = app;
+
+if (process.env.NODE_ENV === "test") {
+  module.exports.__testables = {
+    normaliseCreationInput,
+    enhanceTitle,
+    enhanceDescription
+  };
+}

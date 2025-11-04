@@ -24,7 +24,7 @@ const path = require('path');
 
 // Database configuration from environment variables
 const DB_CONFIG = {
-  host: process.env.DB_HOST || 'localhost',
+  host: process.env.DB_HOST || '127.0.0.1',  // Use 127.0.0.1 instead of localhost to force IPv4
   port: process.env.DB_PORT || 5432,
   database: process.env.DB_NAME || 'atlas',
   user: process.env.DB_USER || 'rootUser',

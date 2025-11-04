@@ -114,6 +114,7 @@ public class AgentService {
             logEntry.setArgumentsJson(agentToolRegistry.serializeArguments(call.getArguments()));
             logEntry.setResultCount(call.getResultCount());
             logEntry.setStatus(call.getStatus());
+            logEntry.setErrorMessage(call.getError());
             logEntry.setCorrelationId(correlationId);
             if (user != null) {
                 logEntry.setUserId(user.getId());
@@ -160,13 +161,39 @@ public class AgentService {
                 .collect(Collectors.toList());
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> buildDraftPayload(AgentRuntimeDraft draft) {
         Map<String, Object> payload = new HashMap<>();
-        String summary = StringUtils.hasText(draft.getSummary())
-                ? draft.getSummary()
-                : "Agent proposed action requires confirmation";
+        Map<String, Object> runtimePayload = draft.getPayload();
+
+        String summary = null;
+        Map<String, Object> dataSection = new HashMap<>();
+
+        if (runtimePayload != null && !runtimePayload.isEmpty()) {
+            Object nestedSummary = runtimePayload.get("summary");
+            if (nestedSummary instanceof String && StringUtils.hasText((String) nestedSummary)) {
+                summary = ((String) nestedSummary).trim();
+            }
+
+            Object nestedData = runtimePayload.get("data");
+            if (nestedData instanceof Map<?, ?>) {
+                dataSection.putAll((Map<String, Object>) nestedData);
+            } else {
+                Map<String, Object> copy = new HashMap<>(runtimePayload);
+                copy.remove("summary");
+                dataSection.putAll(copy);
+            }
+        }
+
+        if (!StringUtils.hasText(summary) && StringUtils.hasText(draft.getSummary())) {
+            summary = draft.getSummary().trim();
+        }
+        if (!StringUtils.hasText(summary)) {
+            summary = "Agent proposed action requires confirmation";
+        }
+
         payload.put("summary", summary);
-        payload.put("data", draft.getPayload() != null ? draft.getPayload() : Collections.emptyMap());
+        payload.put("data", dataSection);
         return payload;
     }
 

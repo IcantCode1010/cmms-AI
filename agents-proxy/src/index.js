@@ -6,9 +6,11 @@ const crypto = require("crypto");
 const { Agent, run, tool, user, ToolCallError, AgentsError } = require("@openai/agents");
 const { z } = require("zod");
 require("dotenv").config();
+const intentRouter = require("./routes/intent");
 
 const app = express();
 app.use(express.json());
+app.use("/intent", intentRouter);
 
 const PORT = process.env.PORT || 4005;
 const API_BASE = process.env.API_BASE || "http://api:8080";
@@ -247,17 +249,76 @@ const coerceLimit = (value, fallback = 5) => {
 const buildWorkOrderSearchPayload = ({
   limit,
   statuses,
-  searchTerm
+  searchTerm,
+  dueDateBefore,
+  dueDateAfter,
+  createdAtBefore,
+  createdAtAfter,
+  updatedAtBefore,
+  updatedAtAfter,
+  priorities,
+  assignedToUserId,
+  primaryUserId,
+  teamId,
+  assetId,
+  locationId,
+  categoryId,
+  sortBy,
+  sortDirection
 }) => {
   const payload = {
     limit
   };
+
+  // Status filter
   if (Array.isArray(statuses) && statuses.length) {
     payload.statuses = statuses;
   }
+
+  // Search term
   if (typeof searchTerm === "string" && searchTerm.trim()) {
     payload.search = searchTerm.trim();
   }
+
+  // Date filters
+  if (dueDateBefore) payload.dueDateBefore = dueDateBefore;
+  if (dueDateAfter) payload.dueDateAfter = dueDateAfter;
+  if (createdAtBefore) payload.createdAtBefore = createdAtBefore;
+  if (createdAtAfter) payload.createdAtAfter = createdAtAfter;
+  if (updatedAtBefore) payload.updatedAtBefore = updatedAtBefore;
+  if (updatedAtAfter) payload.updatedAtAfter = updatedAtAfter;
+
+  // Priority filter
+  if (priorities) {
+    payload.priorities = Array.isArray(priorities) ? priorities : [priorities];
+  }
+
+  // Assignment filters
+  if (assignedToUserId !== undefined && assignedToUserId !== null) {
+    payload.assignedToUserId = assignedToUserId;
+  }
+  if (primaryUserId !== undefined && primaryUserId !== null) {
+    payload.primaryUserId = primaryUserId;
+  }
+  if (teamId !== undefined && teamId !== null) {
+    payload.teamId = teamId;
+  }
+
+  // Classification filters
+  if (assetId !== undefined && assetId !== null) {
+    payload.assetId = assetId;
+  }
+  if (locationId !== undefined && locationId !== null) {
+    payload.locationId = locationId;
+  }
+  if (categoryId !== undefined && categoryId !== null) {
+    payload.categoryId = categoryId;
+  }
+
+  // Sorting
+  if (sortBy) payload.sortBy = sortBy;
+  if (sortDirection) payload.sortDirection = sortDirection;
+
   return payload;
 };
 
@@ -635,7 +696,7 @@ const normaliseCreationInput = (input) => {
 const viewWorkOrdersTool = tool({
   name: "view_work_orders",
   description:
-    "Retrieve work orders for the current tenant. Provide an optional search term and statuses to filter results.",
+    "Retrieve work orders for the current tenant. Supports filtering by status, priority, dates, assignments, and assets. Use this for listing and filtering work orders.",
   parameters: z
     .object({
       limit: z.number().int().min(1).max(MAX_TOOL_RESULTS).optional().nullable(),
@@ -643,7 +704,30 @@ const viewWorkOrdersTool = tool({
         .union([z.array(z.string()), z.string()])
         .optional()
         .nullable(),
-      search: z.string().optional().nullable()
+      search: z.string().optional().nullable(),
+      // Date filters
+      dueDateBefore: z.string().optional().nullable(),
+      dueDateAfter: z.string().optional().nullable(),
+      createdAtBefore: z.string().optional().nullable(),
+      createdAtAfter: z.string().optional().nullable(),
+      updatedAtBefore: z.string().optional().nullable(),
+      updatedAtAfter: z.string().optional().nullable(),
+      // Priority filters
+      priorities: z
+        .union([z.array(z.enum(["NONE", "LOW", "MEDIUM", "HIGH"])), z.enum(["NONE", "LOW", "MEDIUM", "HIGH"])])
+        .optional()
+        .nullable(),
+      // Assignment filters
+      assignedToUserId: z.number().int().optional().nullable(),
+      primaryUserId: z.number().int().optional().nullable(),
+      teamId: z.number().int().optional().nullable(),
+      // Classification filters
+      assetId: z.number().int().optional().nullable(),
+      locationId: z.number().int().optional().nullable(),
+      categoryId: z.number().int().optional().nullable(),
+      // Sorting
+      sortBy: z.string().optional().nullable(),
+      sortDirection: z.enum(["ASC", "DESC"]).optional().nullable()
     })
     .strict(),
   execute: async (input, runContext) => {
@@ -673,10 +757,26 @@ const viewWorkOrdersTool = tool({
     const searchTerm =
       typeof input?.search === "string" ? input.search : "";
 
+    // Extract new filter parameters
     const criteria = buildWorkOrderSearchPayload({
       limit,
       statuses: statusList,
-      searchTerm
+      searchTerm,
+      dueDateBefore: input?.dueDateBefore,
+      dueDateAfter: input?.dueDateAfter,
+      createdAtBefore: input?.createdAtBefore,
+      createdAtAfter: input?.createdAtAfter,
+      updatedAtBefore: input?.updatedAtBefore,
+      updatedAtAfter: input?.updatedAtAfter,
+      priorities: input?.priorities,
+      assignedToUserId: input?.assignedToUserId,
+      primaryUserId: input?.primaryUserId,
+      teamId: input?.teamId,
+      assetId: input?.assetId,
+      locationId: input?.locationId,
+      categoryId: input?.categoryId,
+      sortBy: input?.sortBy,
+      sortDirection: input?.sortDirection
     });
 
     const logEntry = {
@@ -1055,6 +1155,69 @@ const updateWorkOrderTool = tool({
   }
 });
 
+const viewWorkOrderDetailsTool = tool({
+  name: "view_work_order_details",
+  description:
+    "Get comprehensive details for a specific work order including tasks, labor, files, history, and all related entities. Use this when the user asks for full details about a work order, wants to see tasks or labor entries, or needs complete information before taking action. REQUIRED: workOrderId (work order ID or code).",
+  parameters: z
+    .object({
+      workOrderId: z.union([z.string(), z.number()])
+    })
+    .strict(),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const {
+      authorizationHeader,
+      userContext,
+      sessionId,
+      toolLogs,
+      toolResults
+    } = ctx;
+    ensureRoleAccess(userContext, ALLOWED_AGENT_ROLES, "view_work_order_details");
+    requireTenantId(userContext);
+
+    if (!input?.workOrderId) {
+      throw new ToolCallError("Work order ID is required to retrieve details.");
+    }
+
+    const logEntry = {
+      toolName: "view_work_order_details",
+      arguments: { workOrderId: input.workOrderId },
+      resultCount: 0,
+      status: "queued",
+      sessionId
+    };
+
+    try {
+      const response = await postAgentToolRequest({
+        path: `/api/agent/tools/work-orders/${input.workOrderId}/details`,
+        authorizationHeader,
+        body: {}
+      });
+
+      logEntry.resultCount = 1;
+      logEntry.status = "success";
+      toolLogs.push(logEntry);
+
+      // Store in toolResults for potential downstream use
+      if (!toolResults.work_order_details) {
+        toolResults.work_order_details = {};
+      }
+      toolResults.work_order_details[input.workOrderId] = response;
+
+      return JSON.stringify({
+        type: "work_order_details",
+        details: response
+      });
+    } catch (error) {
+      logEntry.status = "error";
+      logEntry.error = error.message;
+      toolLogs.push(logEntry);
+      throw error;
+    }
+  }
+});
+
 const buildAgentInstructions = (runContext) => {
   const displayName = resolveDisplayName(runContext?.context?.userContext) || "there";
   return [
@@ -1064,6 +1227,7 @@ const buildAgentInstructions = (runContext) => {
     "CRITICAL TOOL USAGE RULES:",
     "- You MUST call tools to fetch real data. NEVER guess or make up information.",
     "- When users ask about work orders, you MUST call view_work_orders tool.",
+    "- When users ask for details about a specific work order (tasks, labor, history, files), you MUST call view_work_order_details tool.",
     "- When users ask about assets or equipment, you MUST call view_assets tool.",
     "- When users want to create a work order, you MUST call prepare_work_order_creation_draft or create_work_order_immediately.",
     "- When users want to update or modify an existing work order (assign, change priority, update description, etc.), you MUST call update_work_order tool.",
@@ -1115,6 +1279,7 @@ const getAtlasAgent = (() => {
       temperature: 0,  // Deterministic responses for better tool usage
       tools: [
         viewWorkOrdersTool,
+        viewWorkOrderDetailsTool,
         viewAssetsTool,
         getUserContextTool,
         prepareCreationDraftTool,

@@ -6,6 +6,7 @@ import com.grash.dto.agent.AgentAssetSummary;
 import com.grash.dto.agent.AgentToolResponse;
 import com.grash.dto.agent.AgentWorkOrderCreateRequest;
 import com.grash.dto.agent.AgentWorkOrderCreateResponse;
+import com.grash.dto.agent.AgentWorkOrderDetails;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateRequest;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateResponse;
 import com.grash.dto.agent.AgentWorkOrderSearchRequest;
@@ -82,6 +83,18 @@ public class AgentToolController {
         OwnUser user = userService.whoami(httpRequest);
         AgentToolResponse<AgentAssetSummary> response = agentToolService.searchAssets(user, searchRequest);
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/work-orders/{id}/details")
+    public ResponseEntity<AgentWorkOrderDetails> getWorkOrderDetails(
+            HttpServletRequest httpRequest,
+            @PathVariable("id") String workOrderId) {
+        if (!agentProperties.isChatkitEnabled()) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
+        OwnUser user = userService.whoami(httpRequest);
+        AgentWorkOrderDetails details = agentToolService.getWorkOrderDetails(user, workOrderId);
+        return ResponseEntity.ok(details);
     }
 
     @PostMapping("/work-orders/{id}/update")

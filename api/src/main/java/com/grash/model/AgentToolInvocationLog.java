@@ -39,4 +39,7 @@ public class AgentToolInvocationLog {
 
     @Column(name = "correlation_id", length = 100)
     private String correlationId;
+
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
 }

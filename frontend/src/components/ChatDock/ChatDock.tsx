@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -27,6 +27,7 @@ import {
   sendPrompt,
   toggleDock
 } from 'src/slices/agentChat';
+import MarkdownMessage from './MarkdownMessage';
 
 const parseDraftPayload = (payload: string): { summary?: string; data?: unknown } => {
   try {
@@ -136,6 +137,13 @@ const ChatDock = () => {
     loadingDrafts
   } = useSelector(selectAgentChat);
   const [prompt, setPrompt] = useState('');
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [messages, sending, drafts, open]);
 
   const handleSubmit = useCallback(
     (event: React.FormEvent<HTMLFormElement>) => {
@@ -230,6 +238,7 @@ const ChatDock = () => {
           </Box>
 
           <Box
+            ref={scrollContainerRef}
             sx={{
               flex: 1,
               overflowY: 'auto',
@@ -273,7 +282,11 @@ const ChatDock = () => {
                         : 'text.primary'
                   }}
                 >
-                  <Typography variant="body2">{message.content}</Typography>
+                  {message.role === 'assistant' ? (
+                    <MarkdownMessage content={message.content} />
+                  ) : (
+                    <Typography variant="body2">{message.content}</Typography>
+                  )}
                 </Box>
               </Box>
             ))}

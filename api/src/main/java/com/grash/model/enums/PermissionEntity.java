@@ -15,5 +15,6 @@ public enum PermissionEntity {
     LOCATIONS,
     SETTINGS,
     REQUESTS,
-    ANALYTICS
+    ANALYTICS,
+    AI_BROWSER
 }

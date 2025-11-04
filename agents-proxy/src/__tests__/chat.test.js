@@ -250,3 +250,47 @@ describe("POST /v1/chat", () => {
     expect(axiosMock.post).not.toHaveBeenCalled();
   });
 });
+
+describe("normaliseCreationInput", () => {
+  let normaliseCreationInput;
+
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.OPENAI_API_KEY = "test-key";
+    const app = require("../index");
+    normaliseCreationInput = app.__testables.normaliseCreationInput;
+  });
+
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it("returns enhanced title and description while dropping unsupported fields", () => {
+    const { data, summaryOverride } = normaliseCreationInput({
+      title: "  replace pump seals  ",
+      description: "inspect and replace seals as needed",
+      priority: "HIGH",
+      dueDate: "2025-10-21",
+      summary: "urgent maintenance"
+    });
+
+    expect(data).toEqual({
+      title: "Replace pump seals",
+      priority: "LOW",
+      description: "Inspect and replace seals as needed."
+    });
+    expect(summaryOverride).toBe("Urgent maintenance");
+  });
+
+  it("falls back to placeholder description when none is provided", () => {
+    const { data } = normaliseCreationInput({
+      title: "boiler inspection"
+    });
+
+    expect(data).toEqual({
+      title: "Boiler inspection",
+      priority: "LOW",
+      description: "Boiler inspection (details pending update)."
+    });
+  });
+});

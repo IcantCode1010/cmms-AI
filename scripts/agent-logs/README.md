@@ -1,331 +1,202 @@
-# Agent Tool Log Utilities
+# Agent Troubleshooting Utility
 
-Utilities for capturing, exporting, and analyzing agent tool invocation logs from the Atlas CMMS system.
+## Quick Start
 
-## Overview
+### Option 1: Using Wrapper Scripts (Recommended)
 
-This toolkit provides three complementary approaches to working with agent tool logs:
-
-1. **SQL Queries** - Direct database queries for quick analysis
-2. **Node.js Export Script** - Flexible log export to JSON/CSV formats
-3. **Python Analysis Script** - Comprehensive log analysis and reporting
-
-## Prerequisites
-
-### Database Access
-All utilities require access to the PostgreSQL database with the `agent_tool_invocation_log` table.
-
-**Database Credentials** (configured in `.env`):
-- Host: localhost
-- Port: 5432
-- Database: atlas
-- User: rootUser
-- Password: mypassword
-
-### Installation
-
-**Node.js Script:**
-```bash
-cd scripts/agent-logs
-npm install
-```
-
-**Python Script:**
-```bash
-pip install psycopg2-binary
-```
-
-### Quick Start
-
-**Test your database connection first:**
-```bash
-python test-connection.py
-```
-
-If you see "✓ Connection successful!" you're ready to go!
-
-## Usage
-
-### 1. SQL Queries (query-tool-logs.sql)
-
-Run these queries directly against your PostgreSQL database using `psql`, pgAdmin, or any SQL client.
-
-**Examples:**
+The easiest way to run the troubleshooting script:
 
 ```bash
-# Using psql
-psql -U postgres -d atlas -f query-tool-logs.sql
+# Windows
+cd C:\projects\cmms-AI
+scripts\agent-logs\troubleshoot.bat
 
-# Run specific query
-psql -U postgres -d atlas -c "SELECT tool_name, COUNT(*) FROM agent_tool_invocation_log GROUP BY tool_name;"
-
-# Export to CSV
-psql -U postgres -d atlas -c "\copy (SELECT * FROM agent_tool_invocation_log WHERE created_at > NOW() - INTERVAL '7 days') TO 'logs.csv' CSV HEADER"
+# Linux/Mac
+cd /path/to/cmms-AI
+chmod +x scripts/agent-logs/troubleshoot.sh
+./scripts/agent-logs/troubleshoot.sh
 ```
 
-**Available Queries:**
-- Recent tool invocations (last 24 hours)
-- Tool usage summary
-- User activity analysis
-- Conversation session details
-- Error rate analysis
-- Hourly usage patterns
-- Company usage breakdown
-- Tool combination patterns
-- Failed tool calls for debugging
+This will automatically generate a timestamped report file.
 
-### 2. Node.js Export Script (export-logs.js)
+### Option 2: Direct Python Execution
 
-Export logs to JSON or CSV format with flexible filtering.
-
-**Basic Usage:**
+If you have Python and database access configured:
 
 ```bash
-# Export last 7 days as JSON
-node export-logs.js --output logs.json
-
-# Export as CSV
-node export-logs.js --format csv --output logs.csv
-
-# Export last 24 hours
-node export-logs.js --days 1 --output recent-logs.json
+cd C:\projects\cmms-AI\scripts\agent-logs
+source .env  # Load database credentials
+python troubleshoot-agent.py --days 1
 ```
 
-**Advanced Filtering:**
+## What It Does
 
-```bash
-# Filter by tool name
-node export-logs.js --tool view_work_orders --output wo-logs.json
+The troubleshooting utility generates a comprehensive report that includes:
 
-# Filter by status
-node export-logs.js --status error --output errors.json
+✅ **Summary Statistics**
+- Total tool invocations
+- Success/failure rates
+- Active users and sessions
 
-# Filter by user ID
-node export-logs.js --user 42 --output user-42-logs.json
+✅ **Issue Detection**
+- Automatically identifies common problems
+- Highlights critical issues
+- Provides troubleshooting recommendations
 
-# Combine filters
-node export-logs.js --tool view_work_orders --status success --days 1 --output success-logs.csv
+✅ **Tool Usage Analysis**
+- Per-tool success rates
+- Recent invocations with full details
+- Error patterns
+
+✅ **Draft Actions**
+- Pending confirmations
+- Applied drafts
+- User activity
+
+✅ **Docker Logs**
+- Agents-proxy container logs
+- API container logs (agent-related)
+- Filtered for relevant entries
+
+✅ **Recommendations**
+- Specific troubleshooting steps
+- Common issue solutions
+- Best practices
+
+## Report Example
+
 ```
+================================================================================
+AGENT TROUBLESHOOTING REPORT
+================================================================================
+Generated: 2025-10-21T12:00:00
+Time Range: Last 1 days
 
-**Pipe to Other Tools:**
+================================================================================
+SUMMARY
+================================================================================
+Total Tool Invocations: 93
+  ✅ Successful: 93
+  ❌ Failed: 0
+  Success Rate: 100.00%
 
-```bash
-# Use jq for JSON processing
-node export-logs.js --days 1 | jq '.[] | select(.tool_name == "view_work_orders")'
+Draft Actions: 3
+  Pending: 1
+  Applied: 2
 
-# Count tools by type
-node export-logs.js --days 7 | jq -r '.[].tool_name' | sort | uniq -c
-```
+================================================================================
+ISSUE ANALYSIS
+================================================================================
 
-**Environment Variables:**
+⚠️  WARNINGS:
+  ⚠️  CRITICAL: Agent receiving chat prompts but NOT calling any tools!
 
-```bash
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=atlas
-export DB_USER=postgres
-export DB_PASSWORD=your_password
-
-node export-logs.js --output logs.json
-```
-
-### 3. Python Analysis Script (analyze-logs.py)
-
-Generate comprehensive analysis reports with insights and statistics.
-
-**Basic Usage:**
-
-```bash
-# Generate full report (all analysis types)
-python analyze-logs.py --days 7 --output report.json
-
-# Generate specific report type
-python analyze-logs.py --report-type summary
-python analyze-logs.py --report-type tools
-python analyze-logs.py --report-type users
-python analyze-logs.py --report-type errors
-python analyze-logs.py --report-type sessions
-```
-
-**Report Types:**
-
-1. **Summary** - Overall usage statistics
-   - Total invocations, success rate
-   - Unique users, sessions, tools
-   - Time span and calls per hour
-
-2. **Tools** - Tool-specific analysis
-   - Calls per tool
-   - Success/failure rates
-   - Average results per call
-   - Last usage timestamp
-
-3. **Users** - User activity analysis
-   - Calls per user
-   - Unique sessions per user
-   - Tools used by each user
-   - Last activity timestamp
-
-4. **Errors** - Error pattern analysis
-   - Total errors and error rate
-   - Errors by tool
-   - Errors by user
-   - Recent error details
-
-5. **Sessions** - Conversation session analysis
-   - Tool sequences in sessions
-   - Session duration
-   - Tools per session
-   - User and company per session
-
-**Example Output:**
-
-```json
-{
-  "summary": {
-    "total_invocations": 1523,
-    "successful": 1445,
-    "failed": 78,
-    "success_rate": "94.88%",
-    "unique_users": 23,
-    "unique_sessions": 187,
-    "unique_tools": 4,
-    "avg_calls_per_hour": 8.96
-  },
-  "tools": [
-    {
-      "tool_name": "view_work_orders",
-      "total_calls": 876,
-      "successful": 850,
-      "failed": 26,
-      "success_rate": "97.03%",
-      "avg_results": 3.4
-    }
-  ]
-}
+Troubleshooting Steps:
+  1. Check agent system instructions (agents-proxy/src/index.js)
+  2. Verify tools are registered in the agent's tools array
+  3. Check OpenAI API key and model configuration
+  ...
 ```
 
 ## Common Use Cases
 
-### Monitor Tool Usage
+### Daily Health Check
 ```bash
-# Quick summary of recent activity
-psql -U postgres -d atlas -f query-tool-logs.sql | head -n 50
-
-# Export for analysis
-node export-logs.js --days 30 --output monthly-logs.json
-python analyze-logs.py --days 30 --output monthly-report.json
+troubleshoot.bat
 ```
 
-### Debug Errors
+### Investigate User Report
 ```bash
-# Export failed calls
-node export-logs.js --status error --days 7 --output errors.json
-
-# Analyze error patterns
-python analyze-logs.py --report-type errors --days 7
+python troubleshoot-agent.py --days 7 --output user-issue-report.txt
 ```
 
-### User Activity Tracking
+### Pre-Deployment Validation
 ```bash
-# Export specific user's activity
-node export-logs.js --user 42 --days 30 --output user-42-activity.csv
+# Before deployment
+troubleshoot.bat > before.txt
 
-# Analyze all users
-python analyze-logs.py --report-type users --days 30
+# After deployment
+troubleshoot.bat > after.txt
+
+# Compare
+diff before.txt after.txt
 ```
 
-### Session Analysis
+### Session-Specific Investigation
 ```bash
-# Analyze conversation patterns
-python analyze-logs.py --report-type sessions --days 7 --output sessions.json
-
-# Find most common tool sequences
-psql -U postgres -d atlas -c "SELECT tool_sequence, COUNT(*) FROM (SELECT correlation_id, STRING_AGG(tool_name, ' → ' ORDER BY created_at) as tool_sequence FROM agent_tool_invocation_log GROUP BY correlation_id) sub GROUP BY tool_sequence ORDER BY count DESC LIMIT 10;"
+# Get session ID from UI or logs
+python troubleshoot-agent.py --session fc132964-2ef4-49e0-b9ab-7260577cc040
 ```
 
-## Database Schema
+## Requirements
 
-The utilities work with the `agent_tool_invocation_log` table:
+### For Windows (.bat script)
+- Docker Desktop running
+- Python 3.x
+- psycopg2-binary: `pip install psycopg2-binary`
 
-```sql
-CREATE TABLE agent_tool_invocation_log (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT,
-    company_id BIGINT,
-    tool_name VARCHAR(255) NOT NULL,
-    arguments_json TEXT,
-    result_count INTEGER,
-    status VARCHAR(50),
-    correlation_id VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES own_user(id),
-    FOREIGN KEY (company_id) REFERENCES company(id)
-);
+### For Direct Execution
+- Python 3.7+
+- psycopg2-binary package
+- Database credentials in `.env` file
+- Access to Docker (for container logs)
+
+## Output Location
+
+Reports are saved to:
+```
+scripts/agent-logs/agent-troubleshoot-YYYYMMDD-HHMMSS.txt
 ```
 
-## Troubleshooting
+Example: `agent-troubleshoot-20251021-120000.txt`
 
-### Connection Issues
+## Troubleshooting the Troubleshooter
 
-**Node.js:**
+### "psycopg2 not found"
 ```bash
-# Test connection
-node -e "const {Client}=require('pg');const c=new Client({host:'localhost',database:'atlas',user:'postgres',password:'postgres'});c.connect().then(()=>console.log('OK')).catch(e=>console.error(e));"
+pip install psycopg2-binary
 ```
 
-**Python:**
+### "Docker not running"
+Start Docker Desktop and ensure containers are up:
 ```bash
-# Test connection
-python -c "import psycopg2; conn=psycopg2.connect(host='localhost',database='atlas',user='postgres',password='postgres'); print('OK')"
+docker-compose ps
 ```
 
-### No Data Found
+### "Connection refused"
+The .bat/.sh scripts handle this automatically by using Docker exec.
+If running Python directly, ensure database is accessible.
 
-Check if logs exist:
-```sql
-SELECT COUNT(*) FROM agent_tool_invocation_log;
-SELECT MAX(created_at) FROM agent_tool_invocation_log;
+## Documentation
+
+For detailed troubleshooting guide, see:
+[TROUBLESHOOTING_GUIDE.md](./TROUBLESHOOTING_GUIDE.md)
+
+## Related Scripts
+
+- `export-logs.js` - Export raw data to JSON/CSV
+- `analyze-logs.py` - Statistical analysis
+- `troubleshoot-agent.py` - Main troubleshooting script (this tool)
+
+## Examples
+
+### Check Last 24 Hours
+```
+troubleshoot.bat
 ```
 
-### Permission Denied
-
-Ensure database user has SELECT permissions:
-```sql
-GRANT SELECT ON agent_tool_invocation_log TO your_user;
-GRANT SELECT ON own_user TO your_user;
-GRANT SELECT ON company TO your_user;
+### Check Last Week
+```
+troubleshoot.bat 7
 ```
 
-## Integration with Monitoring
-
-### Scheduled Reports
-
-Add to crontab for daily reports:
+### Custom Time Range
 ```bash
-# Daily summary at 9 AM
-0 9 * * * cd /path/to/scripts/agent-logs && python analyze-logs.py --days 1 --output /path/to/reports/daily-$(date +\%Y\%m\%d).json
+python troubleshoot-agent.py --days 3 --output last-3-days.txt
 ```
 
-### Alerting on Errors
+## Support
 
-Monitor error rates:
-```bash
-#!/bin/bash
-ERROR_COUNT=$(node export-logs.js --status error --days 1 | jq length)
-if [ "$ERROR_COUNT" -gt 10 ]; then
-  echo "High error rate: $ERROR_COUNT errors in last 24h" | mail -s "Agent Alert" admin@example.com
-fi
-```
-
-## Contributing
-
-When adding new analysis features:
-1. Update SQL queries in `query-tool-logs.sql`
-2. Add export options to `export-logs.js`
-3. Add analysis methods to `analyze-logs.py`
-4. Update this README with examples
-
-## License
-
-Internal use only - Atlas CMMS project
+- Documentation: `docs/atlas-agents.md`
+- Issues: GitHub Issues
+- Discord: Community server

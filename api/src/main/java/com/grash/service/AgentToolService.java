@@ -8,6 +8,7 @@ import com.grash.dto.agent.AgentAssetSummary;
 import com.grash.dto.agent.AgentToolResponse;
 import com.grash.dto.agent.AgentWorkOrderCreateRequest;
 import com.grash.dto.agent.AgentWorkOrderCreateResponse;
+import com.grash.dto.agent.AgentWorkOrderDetails;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateRequest;
 import com.grash.dto.agent.AgentWorkOrderStatusUpdateResponse;
 import com.grash.dto.agent.AgentWorkOrderSearchRequest;
@@ -93,6 +94,8 @@ public class AgentToolService {
         ensureAuthorised(user);
         int limit = resolveLimit(request.getLimit());
         SearchCriteria criteria = baseCriteria(limit, "updatedAt");
+
+        // Base filters
         criteria.getFilterFields().add(FilterField.builder()
                 .field("company.id")
                 .operation("eq")
@@ -103,8 +106,19 @@ public class AgentToolService {
                 .operation("eq")
                 .value(false)
                 .build());
+
+        // Existing filters
         appendWorkOrderStatusFilter(criteria, request.getStatuses());
         appendSearchFilter(criteria, request.getSearch(), buildWorkOrderSearchFields());
+
+        // NEW: Enhanced filters
+        appendPriorityFilter(criteria, request.getPriorities());
+        appendDateRangeFilter(criteria, "dueDate", request.getDueDateBefore(), request.getDueDateAfter());
+        appendDateRangeFilter(criteria, "createdAt", request.getCreatedAtBefore(), request.getCreatedAtAfter());
+        appendDateRangeFilter(criteria, "updatedAt", request.getUpdatedAtBefore(), request.getUpdatedAtAfter());
+        appendAssignmentFilters(criteria, request);
+        appendClassificationFilters(criteria, request);
+        applySortingConfig(criteria, request.getSortBy(), request.getSortDirection());
 
         Page<WorkOrder> page = workOrderRepository.findAll(buildSpecification(criteria), toPageable(criteria));
         List<AgentWorkOrderSummary> items = page.getContent().stream()
@@ -136,6 +150,22 @@ public class AgentToolService {
                 .map(this::toAssetSummary)
                 .collect(Collectors.toList());
         return AgentToolResponse.of(items);
+    }
+
+    public AgentWorkOrderDetails getWorkOrderDetails(OwnUser user, String workOrderId) {
+        ensureAuthorised(user);
+
+        // Resolve work order (handles both ID and customId)
+        WorkOrder workOrder = resolveWorkOrder(user, workOrderId);
+
+        // Fetch related data
+        List<Task> tasks = taskService.findByWorkOrder(workOrder.getId());
+        Collection<Labor> labor = laborService.findByWorkOrder(workOrder.getId());
+        Collection<WorkOrderHistory> historyCollection = workOrderHistoryService.findByWorkOrder(workOrder.getId());
+        List<WorkOrderHistory> history = new ArrayList<>(historyCollection);
+
+        // Map to DTO
+        return toWorkOrderDetails(workOrder, tasks, labor, history);
     }
 
     @Transactional
@@ -659,6 +689,115 @@ public class AgentToolService {
                 .build();
     }
 
+    private AgentWorkOrderDetails toWorkOrderDetails(WorkOrder wo,
+                                                     List<Task> tasks,
+                                                     Collection<Labor> labor,
+                                                     List<WorkOrderHistory> history) {
+        return AgentWorkOrderDetails.builder()
+                .id(wo.getId())
+                .code(StringUtils.hasText(wo.getCustomId()) ? wo.getCustomId() : String.valueOf(wo.getId()))
+                .title(wo.getTitle())
+                .description(wo.getDescription())
+                .status(wo.getStatus() != null ? wo.getStatus().name() : null)
+                .priority(wo.getPriority() != null ? wo.getPriority().name() : null)
+                .dueDate(wo.getDueDate())
+                .estimatedStartDate(wo.getEstimatedStartDate())
+                .completedOn(wo.getCompletedOn())
+                .estimatedDurationHours(wo.getEstimatedDuration())
+                .asset(wo.getAsset() != null ? toAssetSummaryForDetails(wo.getAsset()) : null)
+                .location(wo.getLocation() != null ? toLocationSummary(wo.getLocation()) : null)
+                .primaryUser(wo.getPrimaryUser() != null ? toUserSummary(wo.getPrimaryUser()) : null)
+                .assignedUsers(wo.getAssignedTo().stream()
+                        .map(this::toUserSummary)
+                        .collect(Collectors.toList()))
+                .team(wo.getTeam() != null ? toTeamSummary(wo.getTeam()) : null)
+                .category(wo.getCategory() != null ? toCategorySummary(wo.getCategory()) : null)
+                .tasks(tasks != null ? tasks.stream().map(this::toTaskSummary).collect(Collectors.toList()) : Collections.emptyList())
+                .labor(labor != null ? labor.stream().map(this::toLaborSummary).collect(Collectors.toList()) : Collections.emptyList())
+                .history(history != null ? history.stream()
+                        .filter(h -> h.getCreatedAt() != null)
+                        .sorted(java.util.Comparator.comparing(WorkOrderHistory::getCreatedAt).reversed())
+                        .map(this::toHistoryEntry)
+                        .collect(Collectors.toList()) : Collections.emptyList())
+                .files(wo.getFiles() != null ? wo.getFiles().stream().map(this::toFileSummary).collect(Collectors.toList()) : Collections.emptyList())
+                .build();
+    }
+
+    private AgentWorkOrderDetails.AssetSummary toAssetSummaryForDetails(Asset asset) {
+        return AgentWorkOrderDetails.AssetSummary.builder()
+                .id(asset.getId())
+                .name(asset.getName())
+                .customId(asset.getCustomId())
+                .status(asset.getStatus() != null ? asset.getStatus().name() : null)
+                .build();
+    }
+
+    private AgentWorkOrderDetails.LocationSummary toLocationSummary(Location location) {
+        return AgentWorkOrderDetails.LocationSummary.builder()
+                .id(location.getId())
+                .name(location.getName())
+                .build();
+    }
+
+    private AgentWorkOrderDetails.UserSummary toUserSummary(OwnUser user) {
+        return AgentWorkOrderDetails.UserSummary.builder()
+                .id(user.getId())
+                .fullName(user.getFullName())
+                .email(user.getEmail())
+                .build();
+    }
+
+    private AgentWorkOrderDetails.TeamSummary toTeamSummary(Team team) {
+        return AgentWorkOrderDetails.TeamSummary.builder()
+                .id(team.getId())
+                .name(team.getName())
+                .build();
+    }
+
+    private AgentWorkOrderDetails.CategorySummary toCategorySummary(WorkOrderCategory category) {
+        return AgentWorkOrderDetails.CategorySummary.builder()
+                .id(category.getId())
+                .name(category.getName())
+                .build();
+    }
+
+    private AgentWorkOrderDetails.TaskSummary toTaskSummary(Task task) {
+        return AgentWorkOrderDetails.TaskSummary.builder()
+                .id(task.getId())
+                .label(task.getTaskBase() != null ? task.getTaskBase().getLabel() : "")
+                .taskValue(task.getValue())
+                .notes(task.getNotes())
+                .build();
+    }
+
+    private AgentWorkOrderDetails.LaborSummary toLaborSummary(Labor labor) {
+        return AgentWorkOrderDetails.LaborSummary.builder()
+                .id(labor.getId())
+                .workerName(labor.getAssignedTo() != null ? labor.getAssignedTo().getFullName() : null)
+                .durationSeconds(labor.getDuration())
+                .startedAt(labor.getStartedAt())
+                .status(labor.getStatus() != null ? labor.getStatus().name() : null)
+                .timeCategory(labor.getTimeCategory() != null ? labor.getTimeCategory().getName() : null)
+                .build();
+    }
+
+    private AgentWorkOrderDetails.HistoryEntry toHistoryEntry(WorkOrderHistory history) {
+        return AgentWorkOrderDetails.HistoryEntry.builder()
+                .id(history.getId())
+                .action(history.getName())
+                .userName(history.getUser() != null ? history.getUser().getFullName() : null)
+                .timestamp(history.getCreatedAt())
+                .build();
+    }
+
+    private AgentWorkOrderDetails.FileSummary toFileSummary(File file) {
+        return AgentWorkOrderDetails.FileSummary.builder()
+                .id(file.getId())
+                .name(file.getName())
+                .url(file.getPath())
+                .build();
+    }
+
     private int resolveLimit(Integer candidate) {
         if (candidate == null) {
             return DEFAULT_LIMIT;
@@ -774,6 +913,152 @@ public class AgentToolService {
         fields.add("name");
         fields.add("customId");
         return fields;
+    }
+
+    private void appendPriorityFilter(SearchCriteria criteria, List<String> priorities) {
+        if (CollectionUtils.isEmpty(priorities)) {
+            return;
+        }
+
+        List<Object> validPriorities = priorities.stream()
+                .filter(StringUtils::hasText)
+                .map(p -> {
+                    try {
+                        return Priority.valueOf(p.toUpperCase(Locale.ENGLISH));
+                    } catch (IllegalArgumentException e) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .map(Priority::name)
+                .distinct()
+                .collect(Collectors.toList());
+
+        if (validPriorities.isEmpty()) {
+            return;
+        }
+
+        criteria.getFilterFields().add(FilterField.builder()
+                .field("priority")
+                .operation("in")
+                .values(validPriorities)
+                .enumName(EnumName.PRIORITY)
+                .build());
+    }
+
+    private void appendDateRangeFilter(
+            SearchCriteria criteria,
+            String fieldName,
+            String beforeDateStr,
+            String afterDateStr) {
+
+        if (StringUtils.hasText(beforeDateStr)) {
+            Date beforeDate = parseDateValue(beforeDateStr);
+            if (beforeDate != null) {
+                criteria.getFilterFields().add(FilterField.builder()
+                        .field(fieldName)
+                        .operation("lte")
+                        .value(beforeDate)
+                        .build());
+            }
+        }
+
+        if (StringUtils.hasText(afterDateStr)) {
+            Date afterDate = parseDateValue(afterDateStr);
+            if (afterDate != null) {
+                criteria.getFilterFields().add(FilterField.builder()
+                        .field(fieldName)
+                        .operation("gte")
+                        .value(afterDate)
+                        .build());
+            }
+        }
+    }
+
+    private void appendAssignmentFilters(
+            SearchCriteria criteria,
+            AgentWorkOrderSearchRequest request) {
+
+        if (request.getAssignedToUserId() != null) {
+            criteria.getFilterFields().add(FilterField.builder()
+                    .field("assignedTo.id")
+                    .operation("eq")
+                    .value(request.getAssignedToUserId())
+                    .build());
+        }
+
+        if (request.getPrimaryUserId() != null) {
+            criteria.getFilterFields().add(FilterField.builder()
+                    .field("primaryUser.id")
+                    .operation("eq")
+                    .value(request.getPrimaryUserId())
+                    .build());
+        }
+
+        if (request.getTeamId() != null) {
+            criteria.getFilterFields().add(FilterField.builder()
+                    .field("team.id")
+                    .operation("eq")
+                    .value(request.getTeamId())
+                    .build());
+        }
+    }
+
+    private void appendClassificationFilters(
+            SearchCriteria criteria,
+            AgentWorkOrderSearchRequest request) {
+
+        if (request.getAssetId() != null) {
+            criteria.getFilterFields().add(FilterField.builder()
+                    .field("asset.id")
+                    .operation("eq")
+                    .value(request.getAssetId())
+                    .build());
+        }
+
+        if (request.getLocationId() != null) {
+            criteria.getFilterFields().add(FilterField.builder()
+                    .field("location.id")
+                    .operation("eq")
+                    .value(request.getLocationId())
+                    .build());
+        }
+
+        if (request.getCategoryId() != null) {
+            criteria.getFilterFields().add(FilterField.builder()
+                    .field("category.id")
+                    .operation("eq")
+                    .value(request.getCategoryId())
+                    .build());
+        }
+    }
+
+    private void applySortingConfig(
+            SearchCriteria criteria,
+            String sortBy,
+            String sortDirection) {
+
+        if (!StringUtils.hasText(sortBy)) {
+            return;  // Keep default sorting
+        }
+
+        // Validate sortBy field
+        Set<String> validSortFields = Set.of(
+                "dueDate", "priority", "status", "createdAt", "updatedAt"
+        );
+
+        if (!validSortFields.contains(sortBy)) {
+            return;  // Invalid field, keep default
+        }
+
+        criteria.setSortField(sortBy);
+
+        // Set direction (default DESC)
+        if ("ASC".equalsIgnoreCase(sortDirection)) {
+            criteria.setDirection(Sort.Direction.ASC);
+        } else {
+            criteria.setDirection(Sort.Direction.DESC);
+        }
     }
 
     private <T> org.springframework.data.jpa.domain.Specification<T> buildSpecification(SearchCriteria criteria) {

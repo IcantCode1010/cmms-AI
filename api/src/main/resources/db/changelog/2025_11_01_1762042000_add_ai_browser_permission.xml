@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.8.xsd">
+
+    <changeSet id="2025_11_01_1762042000_add_ai_browser_permission" author="system">
+        <comment>Add AI_BROWSER permission (ordinal 15) to ADMIN, LIMITED_ADMIN, VIEW_ONLY, and LIMITED_TECHNICIAN roles</comment>
+
+        <!-- Add AI_BROWSER to create_permissions for ADMIN role -->
+        <sql>
+            INSERT INTO role_create_permissions (role_id, create_permissions)
+            SELECT id, 15
+            FROM role
+            WHERE code IN (0, 1)
+            AND NOT EXISTS (
+                SELECT 1 FROM role_create_permissions
+                WHERE role_id = role.id AND create_permissions = 15
+            );
+        </sql>
+
+        <!-- Add AI_BROWSER to view_permissions for all relevant roles -->
+        <sql>
+            INSERT INTO role_view_permissions (role_id, view_permissions)
+            SELECT id, 15
+            FROM role
+            WHERE code IN (0, 1, 3, 4)
+            AND NOT EXISTS (
+                SELECT 1 FROM role_view_permissions
+                WHERE role_id = role.id AND view_permissions = 15
+            );
+        </sql>
+
+        <!-- Add AI_BROWSER to edit_other_permissions for ADMIN and LIMITED_ADMIN -->
+        <sql>
+            INSERT INTO role_edit_other_permissions (role_id, edit_other_permissions)
+            SELECT id, 15
+            FROM role
+            WHERE code IN (0, 1)
+            AND NOT EXISTS (
+                SELECT 1 FROM role_edit_other_permissions
+                WHERE role_id = role.id AND edit_other_permissions = 15
+            );
+        </sql>
+
+        <!-- Add AI_BROWSER to view_other_permissions for ADMIN and LIMITED_ADMIN -->
+        <sql>
+            INSERT INTO role_view_other_permissions (role_id, view_other_permissions)
+            SELECT id, 15
+            FROM role
+            WHERE code IN (0, 1)
+            AND NOT EXISTS (
+                SELECT 1 FROM role_view_other_permissions
+                WHERE role_id = role.id AND view_other_permissions = 15
+            );
+        </sql>
+
+        <!-- Add AI_BROWSER to delete_other_permissions for ADMIN -->
+        <sql>
+            INSERT INTO role_delete_other_permissions (role_id, delete_other_permissions)
+            SELECT id, 15
+            FROM role
+            WHERE code = 0
+            AND NOT EXISTS (
+                SELECT 1 FROM role_delete_other_permissions
+                WHERE role_id = role.id AND delete_other_permissions = 15
+            );
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

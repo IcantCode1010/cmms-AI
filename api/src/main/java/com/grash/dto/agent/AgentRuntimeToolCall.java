@@ -16,4 +16,5 @@ public class AgentRuntimeToolCall {
     private Map<String, Object> arguments;
     private Integer resultCount;
     private String status;
+    private String error;
 }

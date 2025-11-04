@@ -30,7 +30,8 @@ export enum PermissionEntity {
   LOCATIONS = 'LOCATIONS',
   SETTINGS = 'SETTINGS',
   REQUESTS = 'REQUESTS',
-  ANALYTICS = 'ANALYTICS'
+  ANALYTICS = 'ANALYTICS',
+  AI_BROWSER = 'AI_BROWSER'
 }
 export type PermissionRoot =
   | 'createPermissions'

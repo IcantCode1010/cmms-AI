@@ -9,7 +9,7 @@ import sys
 
 # Database configuration
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
+    'host': os.getenv('DB_HOST', '127.0.0.1'),  # Use 127.0.0.1 instead of localhost to force IPv4
     'port': int(os.getenv('DB_PORT', '5432')),
     'database': os.getenv('DB_NAME', 'atlas'),
     'user': os.getenv('DB_USER', 'rootUser'),

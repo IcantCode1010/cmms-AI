@@ -9,6 +9,7 @@ import com.grash.model.AgentDraftAction;
 import com.grash.model.Company;
 import com.grash.model.OwnUser;
 import com.grash.model.WorkOrder;
+import com.grash.model.enums.Priority;
 import com.grash.model.enums.Status;
 import com.grash.repository.AgentDraftActionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,7 +60,7 @@ class AgentDraftServiceTest {
         when(draftActionRepository.findByIdAndUserId(1L, user.getId())).thenReturn(Optional.of(draftAction));
         when(workOrderService.findByIdAndCompany(99L, user.getCompany().getId())).thenReturn(Optional.of(workOrder));
         when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
-        when(agentToolService.updateWorkOrderStatus(eq(user), any(AgentWorkOrderStatusUpdateRequest.class)))
+        when(agentToolService.updateWorkOrderStatus(any(), any(AgentWorkOrderStatusUpdateRequest.class)))
                 .thenReturn(AgentWorkOrderStatusUpdateResponse.builder().success(true).build());
 
         AgentDraftActionResponse response = agentDraftService.confirmDraft(1L, user);
@@ -70,10 +71,12 @@ class AgentDraftServiceTest {
         verify(draftActionRepository, times(1)).save(draftAction);
         ArgumentCaptor<AgentWorkOrderStatusUpdateRequest> requestCaptor =
                 ArgumentCaptor.forClass(AgentWorkOrderStatusUpdateRequest.class);
-        verify(agentToolService).updateWorkOrderStatus(eq(user), requestCaptor.capture());
-        AgentWorkOrderStatusUpdateRequest request = requestCaptor.getValue();
-        assertThat(request.getWorkOrderId()).isEqualTo("99");
-        assertThat(request.getNewStatus()).isEqualTo(Status.COMPLETE.name());
+        verify(agentToolService, times(2)).updateWorkOrderStatus(any(), requestCaptor.capture());
+        assertThat(requestCaptor.getAllValues()).hasSize(2);
+        assertThat(requestCaptor.getAllValues().get(0).getWorkOrderId()).isEqualTo("99");
+        assertThat(requestCaptor.getAllValues().get(0).getNewStatus()).isEqualTo(Status.IN_PROGRESS.name());
+        assertThat(requestCaptor.getAllValues().get(1).getWorkOrderId()).isEqualTo("99");
+        assertThat(requestCaptor.getAllValues().get(1).getNewStatus()).isEqualTo(Status.COMPLETE.name());
     }
 
     @Test
@@ -88,7 +91,7 @@ class AgentDraftServiceTest {
         when(workOrderService.findByCustomIdIgnoreCaseAndCompany("WO000123", user.getCompany().getId()))
                 .thenReturn(Optional.of(workOrder));
         when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
-        when(agentToolService.updateWorkOrderStatus(eq(user), any(AgentWorkOrderStatusUpdateRequest.class)))
+        when(agentToolService.updateWorkOrderStatus(any(), any(AgentWorkOrderStatusUpdateRequest.class)))
                 .thenReturn(AgentWorkOrderStatusUpdateResponse.builder().success(true).build());
 
         AgentDraftActionResponse response = agentDraftService.confirmDraft(2L, user);
@@ -97,10 +100,12 @@ class AgentDraftServiceTest {
         verify(workOrderService).findByCustomIdIgnoreCaseAndCompany("WO000123", user.getCompany().getId());
         ArgumentCaptor<AgentWorkOrderStatusUpdateRequest> requestCaptor =
                 ArgumentCaptor.forClass(AgentWorkOrderStatusUpdateRequest.class);
-        verify(agentToolService).updateWorkOrderStatus(eq(user), requestCaptor.capture());
-        AgentWorkOrderStatusUpdateRequest request = requestCaptor.getValue();
-        assertThat(request.getWorkOrderId()).isEqualTo("WO000123");
-        assertThat(request.getNewStatus()).isEqualTo(Status.COMPLETE.name());
+        verify(agentToolService, times(2)).updateWorkOrderStatus(any(), requestCaptor.capture());
+        assertThat(requestCaptor.getAllValues()).hasSize(2);
+        assertThat(requestCaptor.getAllValues().get(0).getWorkOrderId()).isEqualTo("WO000123");
+        assertThat(requestCaptor.getAllValues().get(0).getNewStatus()).isEqualTo(Status.IN_PROGRESS.name());
+        assertThat(requestCaptor.getAllValues().get(1).getWorkOrderId()).isEqualTo("WO000123");
+        assertThat(requestCaptor.getAllValues().get(1).getNewStatus()).isEqualTo(Status.COMPLETE.name());
     }
 
     @Test
@@ -166,6 +171,50 @@ class AgentDraftServiceTest {
         verify(agentToolService, never()).updateWorkOrderStatus(any(), any());
     }
 
+    @Test
+    void confirmCreateWorkOrderDraftCreatesRecord() {
+        OwnUser user = buildUser(77L, 35L);
+        String payload = "{\"summary\":\"Create work order\",\"data\":{\"title\":\"HVAC filter replacement\",\"description\":\"Replace filters on rooftop unit\",\"priority\":\"High\",\"locationId\":42}}";
+        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "create_work_order", payload);
+        WorkOrder created = buildWorkOrder(501L, user.getCompany());
+        created.setCustomId("WO000501");
+
+        when(draftActionRepository.findByIdAndUserId(3L, user.getId())).thenReturn(Optional.of(draftAction));
+        when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
+        when(workOrderService.create(any(WorkOrder.class), eq(user.getCompany()))).thenReturn(created);
+
+        AgentDraftActionResponse response = agentDraftService.confirmDraft(3L, user);
+
+        assertThat(response.getStatus()).isEqualTo("applied");
+        assertThat(draftAction.getStatus()).isEqualTo("applied");
+        assertThat(draftAction.getPayload()).contains("Work order created.");
+        assertThat(draftAction.getPayload()).contains("WO000501");
+
+        ArgumentCaptor<WorkOrder> workOrderCaptor = ArgumentCaptor.forClass(WorkOrder.class);
+        verify(workOrderService).create(workOrderCaptor.capture(), eq(user.getCompany()));
+        WorkOrder captured = workOrderCaptor.getValue();
+        assertThat(captured.getTitle()).isEqualTo("HVAC filter replacement");
+        assertThat(captured.getDescription()).isEqualTo("Replace filters on rooftop unit");
+        assertThat(captured.getPriority()).isEqualTo(Priority.HIGH);
+    }
+
+    @Test
+    void confirmCreateWorkOrderDraftWithoutTitleFails() {
+        OwnUser user = buildUser(88L, 36L);
+        String payload = "{\"summary\":\"Create work order\",\"data\":{\"description\":\"Missing title\"}}";
+        AgentDraftAction draftAction = buildDraftAction(user.getId(), user.getCompany().getId(), "create_work_order", payload);
+
+        when(draftActionRepository.findByIdAndUserId(4L, user.getId())).thenReturn(Optional.of(draftAction));
+        when(draftActionRepository.save(draftAction)).thenReturn(draftAction);
+
+        assertThatThrownBy(() -> agentDraftService.confirmDraft(4L, user))
+                .isInstanceOf(CustomException.class)
+                .hasMessageContaining("Draft payload missing title");
+
+        assertThat(draftAction.getStatus()).isEqualTo("failed");
+        verify(workOrderService, never()).create(any(WorkOrder.class), any());
+    }
+
     private AgentDraftAction buildDraftAction(Long userId, Long companyId, String operation, String payload) {
         AgentDraftAction draftAction = new AgentDraftAction();
         draftAction.setId(1L);
@@ -200,4 +249,7 @@ class AgentDraftServiceTest {
         return user;
     }
 }
+
+
+
 

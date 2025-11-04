@@ -2,7 +2,7 @@
 set -e
 
 escape() {
-  printf '%s' "$1" | sed "s/'/\\\\'/g"
+  printf '%s' "$1" | sed "s/'/\\'/g"
 }
 
 write_runtime_config() {
@@ -25,7 +25,11 @@ write_runtime_config() {
     BRAND_CONFIG: '$(escape "${BRAND_CONFIG:-}")',
     CHATKIT_ENABLED: '$(escape "${CHATKIT_ENABLED:-false}")',
     CHATKIT_AGENT_ID: '$(escape "${CHATKIT_AGENT_ID:-}")',
-    AGENT_API_BASE: '$(escape "${AGENT_API_BASE:-http://localhost:8080}")'
+    AGENT_API_BASE: '$(escape "${AGENT_API_BASE:-http://localhost:8080}")',
+    REACT_APP_AI_BROWSER_ENABLED: '$(escape "${REACT_APP_AI_BROWSER_ENABLED:-true}")',
+    REACT_APP_ORCHESTRATOR_AGENT_ID: '$(escape "${REACT_APP_ORCHESTRATOR_AGENT_ID:-atlas.orchestrator}")',
+    REACT_APP_OPENAI_MODEL_INTENT: '$(escape "${REACT_APP_OPENAI_MODEL_INTENT:-gpt-4.1-mini}")',
+    REACT_APP_INTENT_SSE_TIMEOUT: '$(escape "${REACT_APP_INTENT_SSE_TIMEOUT:-30000}")'
   };
 })();
 EOF
@@ -33,4 +37,3 @@ EOF
 
 write_runtime_config
 exec "$@"
-

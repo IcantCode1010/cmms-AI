@@ -154,4 +154,10 @@
              relativeToChangelogFile="true"/>
     <include file="changelog/2025_10_12_1760270000_work_order_status_enhancements.xml"
              relativeToChangelogFile="true"/>
+    <include file="changelog/2025_10_29_1761711000_add_error_message_to_tool_log.xml"
+             relativeToChangelogFile="true"/>
+    <include file="changelog/intent/2025_11_01_1762041600_ai_browser_intent.yaml"
+             relativeToChangelogFile="true"/>
+    <include file="changelog/2025_11_01_1762042000_add_ai_browser_permission.xml"
+             relativeToChangelogFile="true"/>
 </databaseChangeLog>

@@ -58,6 +58,12 @@ const ownMenuItems: MenuItems[] = [
         icon: AssignmentTwoToneIcon
       },
       {
+        name: 'nav.ai_browser',
+        link: '/app/ai-browser',
+        icon: SmartToyTwoToneIcon,
+        permission: PermissionEntity.AI_BROWSER
+      } as MenuItem,
+      {
         name: 'preventive_maintenance',
         link: '/app/preventive-maintenances',
         icon: PendingActionsTwoToneIcon,

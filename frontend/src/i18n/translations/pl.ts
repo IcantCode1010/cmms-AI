@@ -1,4 +1,5 @@
 const plJSON = {
+  'nav.ai_browser': 'AI Browser',
   DUPLICATE_OF: 'Duplikat',
   DUPLICATED_BY: 'Zduplikowany przez',
   RELATED_TO: 'Powiązany z',
@@ -1468,3 +1469,5 @@ const plJSON = {
 };
 
 export default plJSON;
+
+

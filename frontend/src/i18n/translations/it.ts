@@ -1,4 +1,5 @@
 const locale = {
+  'nav.ai_browser': 'AI Browser',
   DUPLICATE_OF: 'Duplicato di',
   DUPLICATED_BY: 'Duplicato da',
   RELATED_TO: 'Correlato a',
@@ -1466,3 +1467,4 @@ const locale = {
 };
 
 export default locale;
+

@@ -15,7 +15,7 @@ const Guest: FC<GuestProps> = ({ children }) => {
     return (
       <Navigate
         to={
-          user.role.code === 'REQUESTER' ? '/app/requests' : '/app/work-orders'
+          user.role.code === 'REQUESTER' ? '/app/requests' : '/app/ai-browser'
         }
       />
     );

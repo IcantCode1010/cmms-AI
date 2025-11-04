@@ -1,4 +1,5 @@
 const ptBRJSON = {
+  'nav.ai_browser': 'AI Browser',
   DUPLICATE_OF: 'Duplicado de',
   DUPLICATED_BY: 'Duplicado por',
   RELATED_TO: 'Relacionado a',
@@ -1491,3 +1492,5 @@ const ptBRJSON = {
 };
 
 export default ptBRJSON;
+
+

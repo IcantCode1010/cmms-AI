@@ -1,4 +1,5 @@
 const locale = {
+  'nav.ai_browser': 'AI Browser',
   DUPLICATE_OF: 'نسخة مكررة من',
   DUPLICATED_BY: 'تم تكراره بواسطة',
   RELATED_TO: 'ذات صلة ب',
@@ -1384,3 +1385,4 @@ const locale = {
 };
 
 export default locale;
+

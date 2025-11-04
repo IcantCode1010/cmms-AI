@@ -1376,6 +1376,7 @@ const locale = {
   'Error 404': 'Error 404',
   'Error 500': 'Error 500',
   'Coming Soon': 'Coming Soon',
+  'nav.ai_browser': 'AI Browser',
   Maintenance: 'Maintenance',
   Overview: 'Overview',
   Documentation: 'Documentation',

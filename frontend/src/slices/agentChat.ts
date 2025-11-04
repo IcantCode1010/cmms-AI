@@ -134,7 +134,6 @@ const slice = createSlice({
         state.error = 'Chat assistant is disabled for this environment.';
         return;
       }
-      state.open = true;
       state.sending = true;
       state.error = undefined;
       state.messages.push({

@@ -1,4 +1,5 @@
 const trJSON = {
+  'nav.ai_browser': 'AI Browser',
   DUPLICATE_OF: 'Kopyası',
   DUPLICATED_BY: 'Tarafından çoğaltıldı',
   RELATED_TO: 'İle ilgili',
@@ -1479,3 +1480,5 @@ const trJSON = {
 };
 
 export default trJSON;
+
+

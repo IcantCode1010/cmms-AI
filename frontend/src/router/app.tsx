@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { Navigate } from 'react-router-dom';
 
 import SuspenseLoader from 'src/components/SuspenseLoader';
 import analyticsRoutes from './analytics';
@@ -85,6 +86,7 @@ const Requests = Loader(lazy(() => import('../content/own/Requests')));
 const PreventiveMaintenances = Loader(
   lazy(() => import('../content/own/PreventiveMaintenance'))
 );
+const AiBrowser = Loader(lazy(() => import('../content/own/AiBrowser')));
 
 const PeopleAndTeams = Loader(
   lazy(() => import('../content/own/PeopleAndTeams'))
@@ -101,6 +103,14 @@ const SwitchAccount = Loader(
   lazy(() => import('../content/own/SwitchAccount'))
 );
 const appRoutes = [
+  {
+    index: true,
+    element: <Navigate to="/app/ai-browser" replace />
+  },
+  {
+    path: 'ai-browser',
+    element: <AiBrowser />
+  },
   {
     path: 'settings',
     element: <SettingsLayout />,

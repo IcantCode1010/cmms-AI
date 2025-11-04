@@ -1,4 +1,5 @@
 const deJSON = {
+  'nav.ai_browser': 'AI Browser',
   DUPLICATE_OF: 'Duplikat von',
   DUPLICATED_BY: 'Dupliziert von',
   RELATED_TO: 'Verwandt mit',
@@ -1512,3 +1513,5 @@ const deJSON = {
 };
 
 export default deJSON;
+
+

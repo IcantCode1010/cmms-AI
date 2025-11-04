@@ -1,4 +1,5 @@
 const frJSON = {
+  'nav.ai_browser': 'AI Browser',
   Blueprints: 'Plans',
   'Extended Sidebar': 'Barre latérale étendue',
   'Accent Sidebar': "Barre latérale d'accentuation",
@@ -1547,3 +1548,5 @@ const frJSON = {
 };
 
 export default frJSON;
+
+

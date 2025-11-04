@@ -136,7 +136,7 @@ function Hero() {
 
   useEffect(() => {
     if (shouldNavigate && isAuthenticated) {
-      navigate('/app/work-orders');
+      navigate('/app/ai-browser');
       setGeneratingAccount(false);
       setShouldNavigate(false);
     }
@@ -190,7 +190,7 @@ function Hero() {
           </TypographyH2>
           <Button
             component={RouterLink}
-            to={isAuthenticated ? '/app/work-orders' : '/account/register'}
+            to={isAuthenticated ? '/app/ai-browser' : '/account/register'}
             size="large"
             variant="contained"
           >

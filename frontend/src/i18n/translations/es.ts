@@ -1442,6 +1442,7 @@ const esJSON = {
   Maintenance: 'Mantenimiento',
   Overview: 'Avance',
   Documentation: 'Documentación',
+  'nav.ai_browser': 'AI Browser',
   Welcome: 'Bienvenido',
   Help: 'Ayuda',
   'Features tour': 'Visita de características',

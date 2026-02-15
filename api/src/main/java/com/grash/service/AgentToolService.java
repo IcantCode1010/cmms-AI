@@ -64,7 +64,23 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+
+import com.grash.dto.agent.AgentPartAvailabilityResponse;
+import com.grash.dto.agent.AgentPartCreateRequest;
+import com.grash.dto.agent.AgentPartCreateResponse;
+import com.grash.dto.agent.AgentPartSubstituteResponse;
+import com.grash.dto.agent.AgentPurchaseRequestCreateRequest;
+import com.grash.dto.agent.AgentPurchaseRequestCreateResponse;
+import com.grash.model.Part;
+import com.grash.model.PartCategory;
+import com.grash.model.PurchaseOrder;
+import com.grash.model.Vendor;
+import com.grash.service.PartService;
+import com.grash.service.PurchaseOrderService;
+import com.grash.service.VendorService;
+import com.grash.service.PartCategoryService;
 import java.util.stream.Collectors;
+
 
 @Service
 @RequiredArgsConstructor
@@ -88,12 +104,17 @@ public class AgentToolService {
     private final AssetService assetService;
     private final TeamService teamService;
     private final WorkOrderCategoryService workOrderCategoryService;
+    private final PartService partService;
+    private final PurchaseOrderService purchaseOrderService;
+    private final VendorService vendorService;
+    private final PartCategoryService partCategoryService;
 
     public AgentToolResponse<AgentWorkOrderSummary> searchWorkOrders(OwnUser user,
                                                                      AgentWorkOrderSearchRequest request) {
         ensureAuthorised(user);
         int limit = resolveLimit(request.getLimit());
-        SearchCriteria criteria = baseCriteria(limit, "updatedAt");
+        int page = request.getPage() != null ? Math.max(0, request.getPage()) : 0;
+        SearchCriteria criteria = baseCriteria(page, limit, "updatedAt");
 
         // Base filters
         criteria.getFilterFields().add(FilterField.builder()
@@ -120,8 +141,8 @@ public class AgentToolService {
         appendClassificationFilters(criteria, request);
         applySortingConfig(criteria, request.getSortBy(), request.getSortDirection());
 
-        Page<WorkOrder> page = workOrderRepository.findAll(buildSpecification(criteria), toPageable(criteria));
-        List<AgentWorkOrderSummary> items = page.getContent().stream()
+        Page<WorkOrder> pageResult = workOrderRepository.findAll(buildSpecification(criteria), toPageable(criteria));
+        List<AgentWorkOrderSummary> items = pageResult.getContent().stream()
                 .map(this::toWorkOrderSummary)
                 .collect(Collectors.toList());
         return AgentToolResponse.of(items);
@@ -131,7 +152,7 @@ public class AgentToolService {
                                                              AgentAssetSearchRequest request) {
         ensureAuthorised(user);
         int limit = resolveLimit(request.getLimit());
-        SearchCriteria criteria = baseCriteria(limit, "updatedAt");
+        SearchCriteria criteria = baseCriteria(0, limit, "updatedAt");
         criteria.getFilterFields().add(FilterField.builder()
                 .field("company.id")
                 .operation("eq")
@@ -150,6 +171,150 @@ public class AgentToolService {
                 .map(this::toAssetSummary)
                 .collect(Collectors.toList());
         return AgentToolResponse.of(items);
+    }
+
+    public AgentPartAvailabilityResponse checkPartAvailability(OwnUser user, String partIdentifier, Integer quantity) {
+        ensureAuthorised(user);
+        Part part = resolvePart(user, partIdentifier);
+
+        boolean available = part.getQuantity() >= (quantity != null ? quantity : 1);
+        
+        return AgentPartAvailabilityResponse.builder()
+                .available(available)
+                .currentQuantity(part.getQuantity())
+                .minQuantity(part.getMinQuantity())
+                .partName(part.getName())
+                .partId(part.getId().toString())
+                .location(part.getArea()) // Assuming 'area' field holds location info for now
+                .build();
+    }
+
+    public AgentPartSubstituteResponse findPartSubstitutes(OwnUser user, String partIdentifier) {
+        ensureAuthorised(user);
+        Part part = resolvePart(user, partIdentifier);
+
+        // Simple substitute logic: same category, different part
+        // In a real system, this might use a 'substitutes' relation or vector search
+        List<Part> potentialSubstitutes = partService.findByCompany(user.getCompany().getId()).stream()
+                .filter(p -> !p.getId().equals(part.getId()))
+                .filter(p -> p.getCategory() != null && part.getCategory() != null && 
+                             p.getCategory().getId().equals(part.getCategory().getId()))
+                .limit(5)
+                .collect(Collectors.toList());
+
+        List<AgentPartSubstituteResponse.SubstituteSummary> summaries = potentialSubstitutes.stream()
+                .map(p -> AgentPartSubstituteResponse.SubstituteSummary.builder()
+                        .id(p.getId())
+                        .name(p.getName())
+                        .quantity(p.getQuantity())
+                        .location(p.getArea())
+                        .cost(p.getCost())
+                        .confidenceScore(0.8) // Placeholder score for same-category match
+                        .build())
+                .collect(Collectors.toList());
+
+        return AgentPartSubstituteResponse.builder()
+                .originalPartId(part.getId().toString())
+                .substitutes(summaries)
+                .build();
+    }
+
+    @Transactional
+    public AgentPurchaseRequestCreateResponse createPurchaseRequest(OwnUser user, AgentPurchaseRequestCreateRequest request) {
+        ensureAuthorised(user);
+        
+        if (request == null) throw new CustomException("Request body is missing", HttpStatus.BAD_REQUEST);
+        if (request.getVendorId() == null) throw new CustomException("Vendor ID is required", HttpStatus.BAD_REQUEST);
+
+        Vendor vendor = vendorService.findById(request.getVendorId())
+                .orElseThrow(() -> new CustomException("Vendor not found", HttpStatus.NOT_FOUND));
+
+        PurchaseOrder po = new PurchaseOrder();
+        po.setName(request.getName());
+        po.setVendor(vendor);
+        po.setAdditionalInfoNotes(request.getDescription());
+        po.setShippingAdditionalDetail(request.getShippingInstructions());
+        po.setCompany(user.getCompany());
+        po.setCreatedBy(user.getId());
+        
+        PurchaseOrder savedPo = purchaseOrderService.create(po);
+
+        return AgentPurchaseRequestCreateResponse.builder()
+                .success(true)
+                .purchaseOrderId(savedPo.getId())
+                .status(savedPo.getStatus().name())
+                .message("Purchase request created successfully")
+                .build();
+    }
+
+    @Transactional
+    public AgentPartCreateResponse createManyParts(OwnUser user, AgentPartCreateRequest request) {
+        ensureAuthorised(user);
+        if (!hasRole(user, RoleCode.ADMIN)) {
+            throw new CustomException("Only admins can create parts in bulk via agent", HttpStatus.FORBIDDEN);
+        }
+
+        if (request == null || request.getParts() == null || request.getParts().isEmpty()) {
+             throw new CustomException("No parts provided", HttpStatus.BAD_REQUEST);
+        }
+
+        List<Long> createdIds = new ArrayList<>();
+        int count = 0;
+
+        for (AgentPartCreateRequest.PartRequest partReq : request.getParts()) {
+            Part part = new Part();
+            part.setName(partReq.getName());
+            part.setCost(partReq.getCost() != null ? partReq.getCost() : 0.0);
+            part.setQuantity(partReq.getQuantity() != null ? partReq.getQuantity() : 0.0);
+            part.setMinQuantity(partReq.getMinQuantity() != null ? partReq.getMinQuantity() : 0.0);
+            part.setBarcode(partReq.getBarcode());
+            part.setArea(partReq.getArea());
+            part.setDescription(partReq.getDescription());
+            part.setAdditionalInfos(partReq.getAdditionalInfos());
+            part.setCompany(user.getCompany());
+            
+            if (StringUtils.hasText(partReq.getCategory())) {
+                Optional<PartCategory> cat = partCategoryService.findByNameIgnoreCaseAndCompanySettings(
+                        partReq.getCategory(), user.getCompany().getCompanySettings().getId());
+                cat.ifPresent(part::setCategory);
+            }
+
+            Part saved = partService.create(part);
+            createdIds.add(saved.getId());
+            count++;
+        }
+
+        return AgentPartCreateResponse.builder()
+                .success(true)
+                .createdCount(count)
+                .createdPartIds(createdIds)
+                .message("Successfully created " + count + " parts")
+                .build();
+    }
+
+    private Part resolvePart(OwnUser user, String partIdentifier) {
+        if (!StringUtils.hasText(partIdentifier)) {
+            throw new CustomException("Part identifier required", HttpStatus.BAD_REQUEST);
+        }
+        String trimmed = partIdentifier.trim();
+        Long companyId = user.getCompany().getId();
+        Optional<Part> optional;
+        if (Helper.isNumeric(trimmed)) {
+             try {
+                 Long id = Long.parseLong(trimmed);
+                 optional = partService.findByIdAndCompany(id, companyId);
+             } catch (NumberFormatException ex) {
+                 // Fallback to searching by barcode or name if numeric parse fails (unlikely but safe)
+                 optional = partService.findByBarcodeAndCompany(trimmed, companyId);
+             }
+        } else {
+             // Try barcode first, then name
+             optional = partService.findByBarcodeAndCompany(trimmed, companyId);
+             if (optional.isEmpty()) {
+                 optional = partService.findByNameIgnoreCaseAndCompany(trimmed, companyId);
+             }
+        }
+        return optional.orElseThrow(() -> new CustomException("Part not found: " + partIdentifier, HttpStatus.NOT_FOUND));
     }
 
     public AgentWorkOrderDetails getWorkOrderDetails(OwnUser user, String workOrderId) {
@@ -805,9 +970,9 @@ public class AgentToolService {
         return Math.max(1, Math.min(candidate, MAX_LIMIT));
     }
 
-    private SearchCriteria baseCriteria(int limit, String sortField) {
+    private SearchCriteria baseCriteria(int pageNum, int limit, String sortField) {
         SearchCriteria criteria = SearchCriteria.builder()
-                .pageNum(0)
+                .pageNum(pageNum)
                 .pageSize(limit)
                 .sortField(sortField)
                 .direction(Sort.Direction.DESC)

@@ -4,7 +4,7 @@ FROM maven:3.9.7-eclipse-temurin-17 AS builder
 WORKDIR /workspace
 COPY api/pom.xml ./pom.xml
 COPY api/src ./src
-RUN mvn package -DskipTests
+RUN mvn package -Dmaven.test.skip=true
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app

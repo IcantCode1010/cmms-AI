@@ -248,6 +248,7 @@ const coerceLimit = (value, fallback = 5) => {
 
 const buildWorkOrderSearchPayload = ({
   limit,
+  page,
   statuses,
   searchTerm,
   dueDateBefore,
@@ -267,7 +268,8 @@ const buildWorkOrderSearchPayload = ({
   sortDirection
 }) => {
   const payload = {
-    limit
+    limit,
+    page: page || 0
   };
 
   // Status filter
@@ -696,7 +698,7 @@ const normaliseCreationInput = (input) => {
 const viewWorkOrdersTool = tool({
   name: "view_work_orders",
   description:
-    "Retrieve work orders for the current tenant. Supports filtering by status, priority, dates, assignments, and assets. Use this for listing and filtering work orders.",
+    "Retrieve work orders for the current tenant. Supports filtering by status, priority, dates, assignments, and assets. Use 'page' parameter (0-indexed) to paginate through results. Use this for listing and filtering work orders.",
   parameters: z
     .object({
       limit: z.number().int().min(1).max(MAX_TOOL_RESULTS).optional().nullable(),
@@ -727,7 +729,9 @@ const viewWorkOrdersTool = tool({
       categoryId: z.number().int().optional().nullable(),
       // Sorting
       sortBy: z.string().optional().nullable(),
-      sortDirection: z.enum(["ASC", "DESC"]).optional().nullable()
+      sortDirection: z.enum(["ASC", "DESC"]).optional().nullable(),
+      // Pagination
+      page: z.number().int().min(0).optional().nullable()
     })
     .strict(),
   execute: async (input, runContext) => {
@@ -760,6 +764,7 @@ const viewWorkOrdersTool = tool({
     // Extract new filter parameters
     const criteria = buildWorkOrderSearchPayload({
       limit,
+      page: input?.page,
       statuses: statusList,
       searchTerm,
       dueDateBefore: input?.dueDateBefore,
@@ -797,8 +802,8 @@ const viewWorkOrdersTool = tool({
       const items = Array.isArray(response?.results)
         ? response.results
         : Array.isArray(response)
-        ? response
-        : [];
+          ? response
+          : [];
       const normalised = items
         .map(normaliseWorkOrder)
         .filter(Boolean)
@@ -879,8 +884,8 @@ const viewAssetsTool = tool({
       const items = Array.isArray(response?.results)
         ? response.results
         : Array.isArray(response)
-        ? response
-        : [];
+          ? response
+          : [];
       const normalised = items
         .map(normaliseAsset)
         .filter(Boolean)
@@ -1218,6 +1223,226 @@ const viewWorkOrderDetailsTool = tool({
   }
 });
 
+
+const checkPartAvailabilityTool = tool({
+  name: "check_part_availability",
+  description: "Check if a part is available in sufficient quantity. Returns current stock, location, and min quantity. REQUIRED: partIdentifier (ID, barcode, or name) and quantity.",
+  parameters: z
+    .object({
+      partIdentifier: z.string().min(1, "Part identifier is required"),
+      quantity: z.number().int().min(1).optional().default(1)
+    })
+    .strict(),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const { authorizationHeader, userContext, sessionId, toolLogs } = ctx;
+    ensureRoleAccess(userContext, ALLOWED_AGENT_ROLES, "check_part_availability");
+    requireTenantId(userContext);
+
+    const logEntry = {
+      toolName: "check_part_availability",
+      arguments: input,
+      resultCount: 0,
+      status: "queued",
+      sessionId
+    };
+
+    try {
+      const response = await postAgentToolRequest({
+        path: "/api/agent/tools/parts/check-availability",
+        authorizationHeader,
+        body: input
+      });
+
+      logEntry.resultCount = 1;
+      logEntry.status = "success";
+      toolLogs.push(logEntry);
+
+      return JSON.stringify({
+        status: "success",
+        availability: response
+      });
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        return JSON.stringify({
+          status: "success",
+          availability: {
+            available: false,
+            message: "Part not found with that identifier."
+          }
+        });
+      }
+      logEntry.status = "error";
+      logEntry.error = error.message;
+      toolLogs.push(logEntry);
+      throw error;
+    }
+  }
+});
+
+const findPartSubstituteTool = tool({
+  name: "find_part_substitute",
+  description: "Find substitute parts when a requested part is unavailable or out of stock. search based on category match.",
+  parameters: z
+    .object({
+      partIdentifier: z.string().min(1, "Part identifier is required")
+    })
+    .strict(),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const { authorizationHeader, userContext, sessionId, toolLogs } = ctx;
+    ensureRoleAccess(userContext, ALLOWED_AGENT_ROLES, "find_part_substitute");
+    requireTenantId(userContext);
+
+    const logEntry = {
+      toolName: "find_part_substitute",
+      arguments: input,
+      resultCount: 0,
+      status: "queued",
+      sessionId
+    };
+
+    try {
+      const response = await postAgentToolRequest({
+        path: "/api/agent/tools/parts/find-substitutes",
+        authorizationHeader,
+        body: input
+      });
+
+      logEntry.resultCount = response.substitutes ? response.substitutes.length : 0;
+      logEntry.status = "success";
+      toolLogs.push(logEntry);
+
+      return JSON.stringify({
+        status: "success",
+        substitutes: response.substitutes
+      });
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        return JSON.stringify({
+          status: "success",
+          substitutes: [],
+          message: "Part not found with that identifier."
+        });
+      }
+      logEntry.status = "error";
+      logEntry.error = error.message;
+      toolLogs.push(logEntry);
+      throw error;
+    }
+  }
+});
+
+const createPurchaseRequestTool = tool({
+  name: "create_purchase_request",
+  description: "Create a new purchase request for parts or services from a vendor. REQUIRED: name (title), vendorId.",
+  parameters: z
+    .object({
+      name: z.string().min(1, "Purchase request name is required"),
+      vendorId: z.number().int(),
+      description: z.string().optional().nullable(),
+      shippingInstructions: z.string().optional().nullable()
+    })
+    .strict(),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const { authorizationHeader, userContext, sessionId, toolLogs } = ctx;
+    ensureRoleAccess(userContext, ALLOWED_AGENT_ROLES, "create_purchase_request");
+    requireTenantId(userContext);
+
+    const logEntry = {
+      toolName: "create_purchase_request",
+      arguments: input,
+      resultCount: 0,
+      status: "queued",
+      sessionId
+    };
+
+    try {
+      const response = await postAgentToolRequest({
+        path: "/api/agent/tools/purchase-orders/create",
+        authorizationHeader,
+        body: input
+      });
+
+      logEntry.resultCount = 1;
+      logEntry.status = "success";
+      toolLogs.push(logEntry);
+
+      return JSON.stringify({
+        status: "success",
+        purchaseOrder: response
+      });
+    } catch (error) {
+      logEntry.status = "error";
+      logEntry.error = error.message;
+      toolLogs.push(logEntry);
+      throw error;
+    }
+  }
+});
+
+const createManyPartsTool = tool({
+  name: "create_many_parts",
+  description: "ADMIN ONLY. Bulk create multiple parts at once. Useful for initializing inventory or importing data.",
+  parameters: z
+    .object({
+      parts: z.array(z.object({
+        name: z.string().min(1),
+        cost: z.number().optional().nullable(),
+        quantity: z.number().optional().nullable(),
+        minQuantity: z.number().optional().nullable(),
+        category: z.string().optional().nullable(),
+        description: z.string().optional().nullable(),
+        barcode: z.string().optional().nullable(),
+        area: z.string().optional().nullable(),
+        additionalInfos: z.string().optional().nullable()
+      }))
+    })
+    .strict(),
+  execute: async (input, runContext) => {
+    const ctx = ensureRunContext(runContext);
+    const { authorizationHeader, userContext, sessionId, toolLogs } = ctx;
+
+    // Explicit RBAC check for ADMIN
+    const roleName = ensureAuthorisedUser(userContext);
+    if (roleName !== "ADMIN") {
+      throw new RbacError("Only ADMIN users can perform bulk part creation.");
+    }
+    requireTenantId(userContext);
+
+    const logEntry = {
+      toolName: "create_many_parts",
+      arguments: { count: input.parts.length },
+      resultCount: 0,
+      status: "queued",
+      sessionId
+    };
+
+    try {
+      const response = await postAgentToolRequest({
+        path: "/api/agent/tools/parts/create-many",
+        authorizationHeader,
+        body: input
+      });
+
+      logEntry.resultCount = 1;
+      logEntry.status = "success";
+      toolLogs.push(logEntry);
+
+      return JSON.stringify({
+        status: "success",
+        result: response
+      });
+    } catch (error) {
+      logEntry.status = "error";
+      logEntry.error = error.message;
+      toolLogs.push(logEntry);
+      throw error;
+    }
+  }
+});
+
 const buildAgentInstructions = (runContext) => {
   const displayName = resolveDisplayName(runContext?.context?.userContext) || "there";
   return [
@@ -1262,7 +1487,13 @@ const buildAgentInstructions = (runContext) => {
     "- Highlight critical information",
     "",
     "If the user requests to close or complete a work order, call prepare_work_order_completion_draft after identifying the correct record.",
-    "If information is missing, explain what else you need and provide actionable guidance."
+    "If information is missing, explain what else you need and provide actionable guidance.",
+    "",
+    "INVENTORY & SUPPLY CHAIN:",
+    "- Use check_part_availability to verify stock before assigning parts to work orders.",
+    "- If a part is unavailable, offer to find_part_substitute.",
+    "- Use create_purchase_request to order new parts from vendors.",
+    "- ADMINS ONLY: You can use create_many_parts to bulk import or create inventory items."
   ].join(" ");
 };
 
@@ -1285,7 +1516,11 @@ const getAtlasAgent = (() => {
         prepareCreationDraftTool,
         prepareCompletionDraftTool,
         createWorkOrderDirectlyTool,
-        updateWorkOrderTool
+        updateWorkOrderTool,
+        checkPartAvailabilityTool,
+        findPartSubstituteTool,
+        createPurchaseRequestTool,
+        createManyPartsTool
       ]
     });
     return cachedAgent;

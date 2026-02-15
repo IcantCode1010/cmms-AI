@@ -16,6 +16,9 @@ public class AgentWorkOrderSearchRequest {
     @Max(50)
     private Integer limit;
 
+    @Min(0)
+    private Integer page;
+
     // Date range filters (ISO 8601 format strings)
     private String dueDateBefore;
     private String dueDateAfter;

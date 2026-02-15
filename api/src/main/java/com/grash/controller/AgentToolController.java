@@ -25,6 +25,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.servlet.http.HttpServletRequest;
+import com.grash.dto.agent.AgentPartAvailabilityRequest;
+import com.grash.dto.agent.AgentPartAvailabilityResponse;
+import com.grash.dto.agent.AgentPartCreateRequest;
+import com.grash.dto.agent.AgentPartCreateResponse;
+import com.grash.dto.agent.AgentPartSubstituteRequest;
+import com.grash.dto.agent.AgentPartSubstituteResponse;
+import com.grash.dto.agent.AgentPurchaseRequestCreateRequest;
+import com.grash.dto.agent.AgentPurchaseRequestCreateResponse;
 import javax.validation.Valid;
 
 @RestController
@@ -107,6 +115,54 @@ public class AgentToolController {
         }
         OwnUser user = userService.whoami(httpRequest);
         com.grash.dto.agent.AgentWorkOrderUpdateResponse response = agentToolService.updateWorkOrder(user, workOrderId, updateRequest);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/parts/check-availability")
+    public ResponseEntity<AgentPartAvailabilityResponse> checkPartAvailability(
+            HttpServletRequest httpRequest,
+            @Valid @RequestBody AgentPartAvailabilityRequest request) {
+        if (!agentProperties.isChatkitEnabled()) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
+        OwnUser user = userService.whoami(httpRequest);
+        AgentPartAvailabilityResponse response = agentToolService.checkPartAvailability(user, request.getPartIdentifier(), request.getQuantity());
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/parts/find-substitutes")
+    public ResponseEntity<AgentPartSubstituteResponse> findPartSubstitutes(
+            HttpServletRequest httpRequest,
+            @Valid @RequestBody AgentPartSubstituteRequest request) {
+        if (!agentProperties.isChatkitEnabled()) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
+        OwnUser user = userService.whoami(httpRequest);
+        AgentPartSubstituteResponse response = agentToolService.findPartSubstitutes(user, request.getPartIdentifier());
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/purchase-orders/create")
+    public ResponseEntity<AgentPurchaseRequestCreateResponse> createPurchaseRequest(
+            HttpServletRequest httpRequest,
+            @Valid @RequestBody AgentPurchaseRequestCreateRequest request) {
+        if (!agentProperties.isChatkitEnabled()) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
+        OwnUser user = userService.whoami(httpRequest);
+        AgentPurchaseRequestCreateResponse response = agentToolService.createPurchaseRequest(user, request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/parts/create-many")
+    public ResponseEntity<AgentPartCreateResponse> createManyParts(
+            HttpServletRequest httpRequest,
+            @Valid @RequestBody AgentPartCreateRequest request) {
+        if (!agentProperties.isChatkitEnabled()) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
+        OwnUser user = userService.whoami(httpRequest);
+        AgentPartCreateResponse response = agentToolService.createManyParts(user, request);
         return ResponseEntity.ok(response);
     }
 }
